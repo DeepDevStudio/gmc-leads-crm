@@ -12,6 +12,7 @@ import {
     FaUserSlash,
     FaSignOutAlt,
     FaMapMarkedAlt,
+    FaRoute,  // ← ADDED FOR TRIPS
 } from "react-icons/fa";
 
 function Layout() {
@@ -169,6 +170,14 @@ function Layout() {
                         Yatra Bookings
                     </NavLink>
 
+                    {/* NEW: Trips Menu Item */}
+                    <NavLink
+                        to="/trips"
+                        className={menuClass}
+                    >
+                        <FaRoute />
+                        Trips
+                    </NavLink>
 
                     <NavLink
                         to="/interests"

@@ -78,14 +78,20 @@ router.get(
 CREATE CUSTOMER
 =========================
 */
+
 router.post("/", (req, res) => {
- const {
-  customer_name,
-  mobile_number,
-  interests,
-  location_type,
-  group_type,
-} = req.body;
+  const {
+    customer_name,
+    mobile_number,
+    interests,
+    location_type,
+  } = req.body;
+
+  let group_type = "Daily Reach";
+
+  if (location_type === "Outside Delhi NCR") {
+    group_type = "Do Not Reach";
+  }
 
   db.query(
     `
@@ -96,7 +102,6 @@ router.post("/", (req, res) => {
       interests,
       location_type,
       group_type
-      
     )
     VALUES (?, ?, ?, ?, ?)
     `,
@@ -109,9 +114,7 @@ router.post("/", (req, res) => {
     ],
     (err, result) => {
       if (err) {
-        return res
-          .status(500)
-          .json(err);
+        return res.status(500).json(err);
       }
 
       res.status(201).json({
@@ -122,7 +125,6 @@ router.post("/", (req, res) => {
   );
 });
 
-
 /*
 =========================
 UPDATE CUSTOMER
@@ -132,13 +134,18 @@ router.put(
   "/:id",
   (req, res) => {
 
-    const {
-      customer_name,
-      mobile_number,
-      interests,
-      location_type,
-      group_type,
-    } = req.body;
+   const {
+  customer_name,
+  mobile_number,
+  interests,
+  location_type,
+} = req.body;
+
+let group_type = "Daily Reach";
+
+if (location_type === "Outside Delhi NCR") {
+  group_type = "Do Not Reach";
+}
 
     db.query(
       `
@@ -177,33 +184,115 @@ router.put(
   }
 );
 
-
-router.get("/:id", (req, res) => {
+/*
+=========================
+UNSUBSCRIBE CUSTOMER
+=========================
+*/
+router.get("/unsubscribe/:mobile", (req, res) => {
 
   db.query(
     `
-    SELECT *
-    FROM customers
-    WHERE id = ?
+    UPDATE customers
+    SET group_type = 'Unsubscribed'
+    WHERE mobile_number = ?
     `,
-    [req.params.id],
-    (err, results) => {
+    [req.params.mobile],
+    (err) => {
 
       if (err) {
-        return res
-          .status(500)
-          .json(err);
+        return res.status(500).send("Error");
       }
 
-      res.json(
-        results[0]
-      );
-
+      res.send("You have been unsubscribed successfully.");
     }
   );
 
 });
 
+
+
+/*
+=========================
+DAILY REACH CUSTOMERS
+=========================
+*/
+router.get(
+  "/group/daily-reach",
+  (req, res) => {
+
+    db.query(
+      `
+      SELECT *
+      FROM customers
+      WHERE group_type = 'Daily Reach'
+      ORDER BY id DESC
+      `,
+      (err, rows) => {
+
+        if (err) {
+          return res.status(500).json(err);
+        }
+
+        res.json(rows);
+
+      }
+    );
+
+  }
+);
+
+
+router.get(
+  "/group/do-not-reach",
+  (req, res) => {
+
+    db.query(
+      `
+      SELECT *
+      FROM customers
+      WHERE group_type = 'Do Not Reach'
+      ORDER BY id DESC
+      `,
+      (err, rows) => {
+
+        if (err) {
+          return res.status(500).json(err);
+        }
+
+        res.json(rows);
+
+      }
+    );
+
+  }
+);
+
+
+router.get(
+  "/group/unsubscribed",
+  (req, res) => {
+
+    db.query(
+      `
+      SELECT *
+      FROM customers
+      WHERE group_type = 'Unsubscribed'
+      ORDER BY id DESC
+      `,
+      (err, rows) => {
+
+        if (err) {
+          return res.status(500).json(err);
+        }
+
+        res.json(rows);
+
+      }
+    );
+
+  }
+);
 
 
 /*
@@ -308,6 +397,68 @@ router.get(
   }
 );
 
+
+/*
+=========================
+MOVE CUSTOMER GROUP
+=========================
+*/
+router.put("/group/:id", (req, res) => {
+
+  const { group_type } = req.body;
+
+  db.query(
+    `
+    UPDATE customers
+    SET group_type = ?
+    WHERE id = ?
+    `,
+    [group_type, req.params.id],
+    (err) => {
+
+      if (err) {
+        return res.status(500).json(err);
+      }
+
+      res.json({
+        success: true,
+      });
+
+    }
+  );
+
+});
+
+
+
+
+
+router.get("/:id", (req, res) => {
+
+  db.query(
+    `
+    SELECT *
+    FROM customers
+    WHERE id = ?
+    `,
+    [req.params.id],
+    (err, results) => {
+
+      if (err) {
+        return res
+          .status(500)
+          .json(err);
+      }
+
+      res.json(
+        results[0]
+      );
+
+    }
+  );
+
+});
+
 /*
 =========================
 DELETE CUSTOMER
@@ -333,5 +484,7 @@ router.delete("/:id", (req, res) => {
     }
   );
 });
+
+
 
 module.exports = router;

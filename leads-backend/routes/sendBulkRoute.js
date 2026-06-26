@@ -10,9 +10,10 @@ router.get("/", async (req, res) => {
 
     db.query(
       `
-      SELECT *
-      FROM customers
-      WHERE group_type = 'Daily Reach'
+     SELECT *
+FROM customers
+WHERE group_type = 'Daily Reach'
+AND location_type = 'Delhi NCR'
       `,
       async (err, customers) => {
 

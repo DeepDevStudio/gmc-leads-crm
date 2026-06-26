@@ -5,14 +5,17 @@ const API =
 
 export const getCustomers =
   async () => {
+
     const response =
       await axios.get(API);
 
     return response.data;
+
   };
 
 export const createCustomer =
   async (data) => {
+
     const response =
       await axios.post(
         API,
@@ -20,19 +23,22 @@ export const createCustomer =
       );
 
     return response.data;
+
   };
 
 export const deleteCustomer =
   async (id) => {
+
     const response =
       await axios.delete(
         `${API}/${id}`
       );
 
     return response.data;
+
   };
 
-  export const checkCustomer =
+export const checkCustomer =
   async (mobile) => {
 
     const response =
@@ -44,7 +50,7 @@ export const deleteCustomer =
 
   };
 
-  export const updateCustomer =
+export const updateCustomer =
   async (id, data) => {
 
     const response =
@@ -57,12 +63,25 @@ export const deleteCustomer =
 
   };
 
-  export const getCustomer =
+export const getCustomer =
   async (id) => {
 
     const response =
       await axios.get(
-        `${API}/${id}`
+        `${API}/profile/${id}`
+      );
+
+    return response.data;
+
+  };
+
+export const updateCustomerGroup =
+  async (id, group_type) => {
+
+    const response =
+      await axios.put(
+        `${API}/group/${id}`,
+        { group_type }
       );
 
     return response.data;

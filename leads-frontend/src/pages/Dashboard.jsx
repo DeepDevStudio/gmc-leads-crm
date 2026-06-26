@@ -15,12 +15,17 @@ import { Link } from "react-router-dom";
 function Dashboard() {
 
   const [stats, setStats] =
-    useState({
-      customers: 0,
-      templates: 0,
-      activities: 0,
-      messages: 0,
-    });
+  useState({
+    totalCustomers: 0,
+    dailyReach: 0,
+    doNotReach: 0,
+    unsubscribed: 0,
+    templates: 0,
+    activities: 0,
+    messages: 0,
+    totalYatras: 0,
+    totalBookings: 0,
+  });
 
     const [activities,
   setActivities] =
@@ -74,37 +79,49 @@ const loadActivities =
   };
 
     
-  const cards = [
+ const cards = [
 
-    {
-      title:
-        "Total Customers",
-      value:
-        stats.customers,
-    },
+  {
+    title: "Total Customers",
+    value: stats.totalCustomers,
+  },
 
-    {
-      title:
-        "Templates",
-      value:
-        stats.templates,
-    },
+  {
+    title: "Daily Reach",
+    value: stats.dailyReach,
+  },
 
-    {
-      title:
-        "Activities",
-      value:
-        stats.activities,
-    },
+  {
+    title: "Do Not Reach",
+    value: stats.doNotReach,
+  },
 
-    {
-      title:
-        "Messages Sent",
-      value:
-        stats.messages,
-    },
+  {
+    title: "Unsubscribed",
+    value: stats.unsubscribed,
+  },
 
-  ];
+  {
+    title: "Templates",
+    value: stats.templates,
+  },
+
+  {
+    title: "Messages Sent",
+    value: stats.messages,
+  },
+
+  {
+    title: "Total Yatras",
+    value: stats.totalYatras,
+  },
+
+  {
+    title: "Total Bookings",
+    value: stats.totalBookings,
+  },
+
+];
 
   return (
 
@@ -122,7 +139,7 @@ const loadActivities =
 
       </div>
 
-      <div className="grid md:grid-cols-4 gap-6">
+     <div className="grid md:grid-cols-4 lg:grid-cols-4 gap-6">
 
         {cards.map(
           (item, index) => (
@@ -159,6 +176,41 @@ const loadActivities =
         )}
 
       </div>
+
+
+      <div className="grid md:grid-cols-3 gap-6">
+
+  <div className="bg-green-50 border border-green-200 rounded-2xl p-6">
+    <h3 className="font-semibold text-green-700">
+      Daily Reach
+    </h3>
+
+    <p className="text-4xl font-bold mt-3">
+      {stats.dailyReach}
+    </p>
+  </div>
+
+  <div className="bg-red-50 border border-red-200 rounded-2xl p-6">
+    <h3 className="font-semibold text-red-700">
+      Do Not Reach
+    </h3>
+
+    <p className="text-4xl font-bold mt-3">
+      {stats.doNotReach}
+    </p>
+  </div>
+
+  <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-6">
+    <h3 className="font-semibold text-yellow-700">
+      Unsubscribed
+    </h3>
+
+    <p className="text-4xl font-bold mt-3">
+      {stats.unsubscribed}
+    </p>
+  </div>
+
+</div>
 
 
   <div
@@ -282,18 +334,18 @@ const loadActivities =
           >
 
             <h3 className="font-semibold">
-              Total Activities
-            </h3>
+  Daily Reach Customers
+</h3>
 
-            <p
-              className="
-              text-3xl
-              font-bold
-              mt-2
-              "
-            >
-              {stats.activities}
-            </p>
+<p
+  className="
+  text-3xl
+  font-bold
+  mt-2
+  "
+>
+  {stats.dailyReach}
+</p>
 
           </div>
 
@@ -308,18 +360,18 @@ const loadActivities =
           >
 
             <h3 className="font-semibold">
-              Messages Sent
-            </h3>
+  Unsubscribed Customers
+</h3>
 
-            <p
-              className="
-              text-3xl
-              font-bold
-              mt-2
-              "
-            >
-              {stats.messages}
-            </p>
+<p
+  className="
+  text-3xl
+  font-bold
+  mt-2
+  "
+>
+  {stats.unsubscribed}
+</p>
 
           </div>
 
