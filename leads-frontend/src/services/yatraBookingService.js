@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API =
-  "http://localhost:5001/api/yatra-bookings";
+  "/api/api/yatra-bookings";
 
 export const getBookings =
   async () => {

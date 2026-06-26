@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API =
-  "http://localhost:5001/api/activity";
+  "/api/api/activity";
 
 export const createActivity =
   async (data) => {

@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API =
-  "http://localhost:5001/api/reports";
+  "/api/api/reports";
 
 export const getReportStats =
   async () => {

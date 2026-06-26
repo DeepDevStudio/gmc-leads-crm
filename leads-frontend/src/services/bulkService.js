@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API =
-  "http://localhost:5001/api/send-bulk";
+  "/api/api/send-bulk";
 
 export const sendBulkMessages =
   async () => {

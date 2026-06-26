@@ -13,9 +13,7 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
-// ============================================
 // GET: All trips
-// ============================================
 router.get("/", async (req, res) => {
     try {
         const [rows] = await pool.query(
@@ -28,9 +26,7 @@ router.get("/", async (req, res) => {
     }
 });
 
-// ============================================
 // GET: Single trip with bookings
-// ============================================
 router.get("/:id", async (req, res) => {
     try {
         const tripId = req.params.id;
@@ -59,9 +55,7 @@ router.get("/:id", async (req, res) => {
     }
 });
 
-// ============================================
 // POST: Create new trip
-// ============================================
 router.post("/", async (req, res) => {
     const { title, location, start_date, end_date, description } = req.body;
 
@@ -88,9 +82,7 @@ router.post("/", async (req, res) => {
     }
 });
 
-// ============================================
 // POST: Add booking to trip
-// ============================================
 router.post("/:id/bookings", async (req, res) => {
     const tripId = req.params.id;
     const {
@@ -100,6 +92,7 @@ router.post("/:id/bookings", async (req, res) => {
         ticket_price,
         discount,
         advance,
+        advance_received_by,
         notes,
     } = req.body;
 
@@ -116,8 +109,8 @@ router.post("/:id/bookings", async (req, res) => {
         const [result] = await pool.query(
             `INSERT INTO trip_bookings 
              (trip_id, customer_name, phone, seats, ticket_price, discount, 
-              total_cost, advance, balance, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              total_cost, advance, balance, advance_received_by, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 tripId,
                 customer_name,
@@ -128,6 +121,7 @@ router.post("/:id/bookings", async (req, res) => {
                 totalCost,
                 advance || 0,
                 balance,
+                advance_received_by || 'Rajeev',
                 notes || null,
             ]
         );
@@ -144,9 +138,7 @@ router.post("/:id/bookings", async (req, res) => {
     }
 });
 
-// ============================================
 // DELETE: Delete a trip
-// ============================================
 router.delete("/:id", async (req, res) => {
     try {
         const tripId = req.params.id;

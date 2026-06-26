@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API =
-  "http://localhost:5001/api/automation/run";
+  "/api/api/automation/run";
 
 export const runAutomation =
   async () => {

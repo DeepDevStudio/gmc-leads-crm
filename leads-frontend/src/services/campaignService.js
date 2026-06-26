@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API =
-  "http://localhost:5001/api/campaigns";
+  "/api/api/campaigns";
 
 export const getCampaigns =
   async () => {

@@ -24,7 +24,7 @@ const TripsPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get('http://localhost:6000/api/trips');
+      const response = await axios.get('/api/trips');
       if (Array.isArray(response.data)) {
         setTrips(response.data);
       } else {
@@ -51,7 +51,7 @@ const TripsPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:6000/api/trips', newTrip);
+      await axios.post('/api/trips', newTrip);
       setNewTrip({
         title: '',
         location: '',

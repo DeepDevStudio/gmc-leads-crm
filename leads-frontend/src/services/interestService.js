@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API =
-  "http://localhost:5001/api/interests";
+  "/api/api/interests";
 
 export const getInterests =
   async () => {
