@@ -1,33 +1,39 @@
 import axios from "axios";
 
-const API =
-  "/api/api/templates";
+const API = "/api/templates";
 
-export const getTemplates =
-  async () => {
-    const response =
-      await axios.get(API);
-
+// Get all templates
+export const getTemplates = async () => {
+    const response = await axios.get(API);
     return response.data;
-  };
+};
 
-export const createTemplate =
-  async (data) => {
-    const response =
-      await axios.post(
-        API,
-        data
-      );
-
+// Get template by ID
+export const getTemplate = async (id) => {
+    const response = await axios.get(`${API}/${id}`);
     return response.data;
-  };
+};
 
-export const deleteTemplate =
-  async (id) => {
-    const response =
-      await axios.delete(
-        `${API}/${id}`
-      );
-
+// Create new template
+export const createTemplate = async (data) => {
+    const response = await axios.post(API, data);
     return response.data;
-  };
+};
+
+// Update template
+export const updateTemplate = async (id, data) => {
+    const response = await axios.put(`${API}/${id}`, data);
+    return response.data;
+};
+
+// Delete template
+export const deleteTemplate = async (id) => {
+    const response = await axios.delete(`${API}/${id}`);
+    return response.data;
+};
+
+// Toggle template status (Active/Inactive)
+export const toggleTemplateStatus = async (id, status) => {
+    const response = await axios.patch(`${API}/${id}/status`, { status });
+    return response.data;
+};

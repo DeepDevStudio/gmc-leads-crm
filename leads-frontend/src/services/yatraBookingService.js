@@ -1,23 +1,13 @@
 import axios from "axios";
 
-const API =
-  "/api/api/yatra-bookings";
+const API = "/api/yatra-bookings";
 
-export const getBookings =
-  async () => {
-    const response =
-      await axios.get(API);
-
+export const getBookings = async () => {
+    const response = await axios.get(API);
     return response.data;
-  };
+};
 
-export const createBooking =
-  async (data) => {
-    const response =
-      await axios.post(
-        API,
-        data
-      );
-
+export const createBooking = async (data) => {
+    const response = await axios.post(API, data);
     return response.data;
-  };
+};

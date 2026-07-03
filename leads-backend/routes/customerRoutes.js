@@ -1,6 +1,5 @@
 const express = require("express");
 const router = express.Router();
-
 const db = require("../config/db");
 
 /*
@@ -8,121 +7,142 @@ const db = require("../config/db");
 GET ALL CUSTOMERS
 =========================
 */
-router.get("/", (req, res) => {
-  db.query(
-    `
-    SELECT *
-    FROM customers
-    ORDER BY id DESC
-    `,
-    (err, results) => {
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
-
-      res.json(results);
+router.get("/", async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            "SELECT * FROM customers ORDER BY id DESC"
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching customers:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
 });
-
-
 
 /*
 =========================
-CHECK CUSTOMER
+GET CUSTOMERS BY GROUP
 =========================
 */
-router.get(
-  "/check/:mobile",
-  (req, res) => {
+router.get("/group/:group", async (req, res) => {
+    const { group } = req.params;
 
-    db.query(
-      `
-      SELECT *
-      FROM customers
-      WHERE mobile_number = ?
-      LIMIT 1
-      `,
-      [req.params.mobile],
-      (err, rows) => {
+    try {
+        const [rows] = await db.query(
+            "SELECT * FROM customers WHERE group_type = ? ORDER BY customer_name",
+            [group]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching customers by group:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
-        if (err) {
-          return res
-            .status(500)
-            .json(err);
-        }
+/*
+=========================
+GET CUSTOMER COUNT BY GROUP
+=========================
+*/
+router.get("/count/group", async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            "SELECT group_type, COUNT(*) as count FROM customers GROUP BY group_type"
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching group counts:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
-        if (
-          rows.length > 0
-        ) {
-          return res.json({
-            exists: true,
-            customer: rows[0],
-          });
-        }
+/*
+=========================
+BULK UPDATE CUSTOMER GROUP - MUST BE BEFORE /:id ROUTES!
+=========================
+*/
+router.put("/bulk/group", async (req, res) => {
+    const { ids, group_type } = req.body;
+
+    if (!ids || ids.length === 0) {
+        return res.status(400).json({ error: "No customer IDs provided" });
+    }
+
+    if (!group_type) {
+        return res.status(400).json({ error: "Group type is required" });
+    }
+
+    try {
+        const placeholders = ids.map(() => '?').join(',');
+        const query = `UPDATE customers SET group_type = ? WHERE id IN (${placeholders})`;
+        const params = [group_type, ...ids];
+
+        const [result] = await db.query(query, params);
 
         res.json({
-          exists: false,
+            success: true,
+            updated: result.affectedRows,
+            message: `${result.affectedRows} customers updated to "${group_type}"`
         });
+    } catch (err) {
+        console.error("Error bulk updating customer group:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
-      }
-    );
+/*
+=========================
+GET CUSTOMER BY ID
+=========================
+*/
+router.get("/:id", async (req, res) => {
+    const { id } = req.params;
 
-  }
-);
+    try {
+        const [rows] = await db.query(
+            "SELECT * FROM customers WHERE id = ?",
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: "Customer not found" });
+        }
+
+        res.json(rows[0]);
+    } catch (err) {
+        console.error("Error fetching customer:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 /*
 =========================
 CREATE CUSTOMER
 =========================
 */
+router.post("/", async (req, res) => {
+    const { customer_name, mobile_number, interests, location_type, group_type } = req.body;
 
-router.post("/", (req, res) => {
-  const {
-    customer_name,
-    mobile_number,
-    interests,
-    location_type,
-  } = req.body;
-
-  let group_type = "Daily Reach";
-
-  if (location_type === "Outside Delhi NCR") {
-    group_type = "Do Not Reach";
-  }
-
-  db.query(
-    `
-    INSERT INTO customers
-    (
-      customer_name,
-      mobile_number,
-      interests,
-      location_type,
-      group_type
-    )
-    VALUES (?, ?, ?, ?, ?)
-    `,
-    [
-      customer_name,
-      mobile_number,
-      interests,
-      location_type,
-      group_type,
-    ],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json(err);
-      }
-
-      res.status(201).json({
-        success: true,
-        id: result.insertId,
-      });
+    if (!customer_name || !mobile_number) {
+        return res.status(400).json({ error: "Customer name and mobile number are required" });
     }
-  );
+
+    try {
+        const [result] = await db.query(
+            `INSERT INTO customers (customer_name, mobile_number, interests, location_type, group_type)
+             VALUES (?, ?, ?, ?, ?)`,
+            [customer_name, mobile_number, interests || null, location_type || null, group_type || 'Daily Reach']
+        );
+
+        res.status(201).json({
+            success: true,
+            id: result.insertId,
+            message: "Customer created successfully"
+        });
+    } catch (err) {
+        console.error("Error creating customer:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /*
@@ -130,333 +150,63 @@ router.post("/", (req, res) => {
 UPDATE CUSTOMER
 =========================
 */
-router.put(
-  "/:id",
-  (req, res) => {
+router.put("/:id", async (req, res) => {
+    const { id } = req.params;
+    const { customer_name, mobile_number, interests, location_type, group_type } = req.body;
 
-   const {
-  customer_name,
-  mobile_number,
-  interests,
-  location_type,
-} = req.body;
+    try {
+        const [result] = await db.query(
+            `UPDATE customers 
+             SET customer_name = ?, mobile_number = ?, interests = ?, location_type = ?, group_type = ?
+             WHERE id = ?`,
+            [customer_name, mobile_number, interests || null, location_type || null, group_type || 'Daily Reach', id]
+        );
 
-let group_type = "Daily Reach";
-
-if (location_type === "Outside Delhi NCR") {
-  group_type = "Do Not Reach";
-}
-
-    db.query(
-      `
-      UPDATE customers
-      SET
-      customer_name = ?,
-      mobile_number = ?,
-      interests = ?,
-      location_type = ?,
-      group_type = ?
-      WHERE id = ?
-      `,
-      [
-        customer_name,
-        mobile_number,
-        interests,
-        location_type,
-        group_type,
-        req.params.id,
-      ],
-      (err) => {
-
-        if (err) {
-          return res
-            .status(500)
-            .json(err);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Customer not found" });
         }
 
         res.json({
-          success: true,
+            success: true,
+            message: "Customer updated successfully"
         });
-
-      }
-    );
-
-  }
-);
-
-/*
-=========================
-UNSUBSCRIBE CUSTOMER
-=========================
-*/
-router.get("/unsubscribe/:mobile", (req, res) => {
-
-  db.query(
-    `
-    UPDATE customers
-    SET group_type = 'Unsubscribed'
-    WHERE mobile_number = ?
-    `,
-    [req.params.mobile],
-    (err) => {
-
-      if (err) {
-        return res.status(500).send("Error");
-      }
-
-      res.send("You have been unsubscribed successfully.");
+    } catch (err) {
+        console.error("Error updating customer:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
-
 });
 
-
-
 /*
 =========================
-DAILY REACH CUSTOMERS
+UPDATE CUSTOMER GROUP
 =========================
 */
-router.get(
-  "/group/daily-reach",
-  (req, res) => {
+router.put("/:id/group", async (req, res) => {
+    const { id } = req.params;
+    const { group_type } = req.body;
 
-    db.query(
-      `
-      SELECT *
-      FROM customers
-      WHERE group_type = 'Daily Reach'
-      ORDER BY id DESC
-      `,
-      (err, rows) => {
+    if (!group_type) {
+        return res.status(400).json({ error: "Group type is required" });
+    }
 
-        if (err) {
-          return res.status(500).json(err);
-        }
-
-        res.json(rows);
-
-      }
-    );
-
-  }
-);
-
-
-router.get(
-  "/group/do-not-reach",
-  (req, res) => {
-
-    db.query(
-      `
-      SELECT *
-      FROM customers
-      WHERE group_type = 'Do Not Reach'
-      ORDER BY id DESC
-      `,
-      (err, rows) => {
-
-        if (err) {
-          return res.status(500).json(err);
-        }
-
-        res.json(rows);
-
-      }
-    );
-
-  }
-);
-
-
-router.get(
-  "/group/unsubscribed",
-  (req, res) => {
-
-    db.query(
-      `
-      SELECT *
-      FROM customers
-      WHERE group_type = 'Unsubscribed'
-      ORDER BY id DESC
-      `,
-      (err, rows) => {
-
-        if (err) {
-          return res.status(500).json(err);
-        }
-
-        res.json(rows);
-
-      }
-    );
-
-  }
-);
-
-
-/*
-=========================
-CUSTOMER PROFILE
-=========================
-*/
-router.get(
-  "/profile/:id",
-  (req, res) => {
-
-    const customerId =
-      req.params.id;
-
-    db.query(
-      `
-      SELECT *
-      FROM customers
-      WHERE id = ?
-      `,
-      [customerId],
-      (err, customerRows) => {
-
-        if (err) {
-          return res
-            .status(500)
-            .json(err);
-        }
-
-        if (
-          customerRows.length === 0
-        ) {
-          return res
-            .status(404)
-            .json({
-              message:
-                "Customer not found",
-            });
-        }
-
-        const customer =
-          customerRows[0];
-
-        db.query(
-          `
-          SELECT
-            yb.*,
-            ym.yatra_name,
-            ym.start_date,
-            ym.end_date
-          FROM yatra_bookings yb
-          JOIN yatra_master ym
-            ON ym.id = yb.yatra_id
-          WHERE yb.customer_id = ?
-          ORDER BY yb.id DESC
-          `,
-          [customerId],
-          (err2, bookings) => {
-
-            if (err2) {
-              return res
-                .status(500)
-                .json(err2);
-            }
-
-            const totalTrips =
-              bookings.length;
-
-            const revenue =
-              bookings.reduce(
-                (
-                  sum,
-                  item
-                ) =>
-                  sum +
-                  Number(
-                    item.total_amount ||
-                      0
-                  ),
-                0
-              );
-
-            res.json({
-
-              customer,
-
-              totalTrips,
-
-              lifetimeRevenue:
-                revenue,
-
-              bookings,
-
-            });
-
-          }
+    try {
+        const [result] = await db.query(
+            "UPDATE customers SET group_type = ? WHERE id = ?",
+            [group_type, id]
         );
 
-      }
-    );
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Customer not found" });
+        }
 
-  }
-);
-
-
-/*
-=========================
-MOVE CUSTOMER GROUP
-=========================
-*/
-router.put("/group/:id", (req, res) => {
-
-  const { group_type } = req.body;
-
-  db.query(
-    `
-    UPDATE customers
-    SET group_type = ?
-    WHERE id = ?
-    `,
-    [group_type, req.params.id],
-    (err) => {
-
-      if (err) {
-        return res.status(500).json(err);
-      }
-
-      res.json({
-        success: true,
-      });
-
+        res.json({
+            success: true,
+            message: "Customer group updated successfully"
+        });
+    } catch (err) {
+        console.error("Error updating customer group:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
-
-});
-
-
-
-
-
-router.get("/:id", (req, res) => {
-
-  db.query(
-    `
-    SELECT *
-    FROM customers
-    WHERE id = ?
-    `,
-    [req.params.id],
-    (err, results) => {
-
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
-
-      res.json(
-        results[0]
-      );
-
-    }
-  );
-
 });
 
 /*
@@ -464,27 +214,55 @@ router.get("/:id", (req, res) => {
 DELETE CUSTOMER
 =========================
 */
-router.delete("/:id", (req, res) => {
-  db.query(
-    `
-    DELETE FROM customers
-    WHERE id = ?
-    `,
-    [req.params.id],
-    (err) => {
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
+router.delete("/:id", async (req, res) => {
+    const { id } = req.params;
 
-      res.json({
-        success: true,
-      });
+    try {
+        const [result] = await db.query(
+            "DELETE FROM customers WHERE id = ?",
+            [id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Customer not found" });
+        }
+
+        res.json({
+            success: true,
+            message: "Customer deleted successfully"
+        });
+    } catch (err) {
+        console.error("Error deleting customer:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
 });
 
+/*
+=========================
+SEARCH CUSTOMERS
+=========================
+*/
+router.get("/search/:phone", async (req, res) => {
+    const { phone } = req.params;
 
+    try {
+        const [rows] = await db.query(
+            "SELECT * FROM customers WHERE mobile_number LIKE ? LIMIT 1",
+            [`%${phone}`]
+        );
+
+        if (rows.length === 0) {
+            return res.json({ exists: false });
+        }
+
+        res.json({
+            exists: true,
+            customer: rows[0]
+        });
+    } catch (err) {
+        console.error("Error searching customer:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 module.exports = router;

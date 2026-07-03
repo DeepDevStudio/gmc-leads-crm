@@ -1,12 +1,9 @@
+y
 import axios from "axios";
 
-const API =
-  "/api/api/automation/run";
+const API = "/api/automation/run";
 
-export const runAutomation =
-  async () => {
-    const response =
-      await axios.get(API);
-
+export const runAutomation = async (data) => {
+    const response = await axios.post(API, data);
     return response.data;
-  };
+};

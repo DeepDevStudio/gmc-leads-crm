@@ -44,6 +44,12 @@ export const updateCustomerGroup = async (id, group) => {
   return response.data;
 };
 
+// Bulk update customer group
+export const bulkUpdateCustomerGroup = async (ids, group) => {
+  const response = await axios.put(`${API}/bulk/group`, { ids, group_type: group });
+  return response.data;
+};
+
 // Get customers by group (daily-reach, do-not-reach, unsubscribed)
 export const getCustomersByGroup = async (group) => {
   const response = await axios.get(`${API}/group/${group}`);

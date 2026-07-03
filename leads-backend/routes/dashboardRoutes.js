@@ -1,178 +1,102 @@
 const express = require("express");
 const router = express.Router();
-
 const db = require("../config/db");
 
+/*
+=========================
+GET DASHBOARD STATS
+=========================
+*/
 router.get("/stats", async (req, res) => {
+    try {
+        // Customer stats
+        const [customers] = await db.query("SELECT COUNT(*) as total FROM customers");
+        const [dailyReach] = await db.query("SELECT COUNT(*) as count FROM customers WHERE group_type = 'Daily Reach'");
+        const [doNotReach] = await db.query("SELECT COUNT(*) as count FROM customers WHERE group_type = 'Do Not Reach'");
+        const [unsubscribed] = await db.query("SELECT COUNT(*) as count FROM customers WHERE group_type = 'Unsubscribed'");
 
-  try {
+        // Template stats
+        const [templates] = await db.query("SELECT COUNT(*) as total FROM templates");
 
-    const data = {};
+        // Yatra stats
+        const [yatras] = await db.query("SELECT COUNT(*) as total FROM yatra_master");
 
-    db.query(
-      `
-      SELECT
-        COUNT(*) AS totalCustomers,
+        // Booking stats
+        const [bookings] = await db.query("SELECT COUNT(*) as total FROM yatra_trip_customers");
 
-        SUM(
-          CASE
-            WHEN group_type = 'Daily Reach'
-            THEN 1
-            ELSE 0
-          END
-        ) AS dailyReach,
+        // Message stats (from message_logs)
+        const [messages] = await db.query("SELECT COUNT(*) as total FROM message_logs");
 
-        SUM(
-          CASE
-            WHEN group_type = 'Do Not Reach'
-            THEN 1
-            ELSE 0
-          END
-        ) AS doNotReach,
+        // Activity stats
+        const [activities] = await db.query("SELECT COUNT(*) as total FROM activity_logs");
+        const [recentActivities] = await db.query("SELECT * FROM activity_logs ORDER BY id DESC LIMIT 5");
 
-        SUM(
-          CASE
-            WHEN group_type = 'Unsubscribed'
-            THEN 1
-            ELSE 0
-          END
-        ) AS unsubscribed
+        // Trip stats
+        const [trips] = await db.query("SELECT COUNT(*) as total FROM yatra_trips");
 
-      FROM customers
-      `,
-      (err, customerStats) => {
-
-        if (err) {
-          return res.status(500).json(err);
-        }
-
-        Object.assign(
-          data,
-          customerStats[0]
+        // Recent broadcasts (last 5)
+        const [recentBroadcasts] = await db.query(
+            "SELECT * FROM message_logs ORDER BY sent_at DESC LIMIT 5"
         );
 
-        db.query(
-          `
-          SELECT COUNT(*) AS total
-          FROM templates
-          `,
-          (err2, templates) => {
+        res.json({
+            totalCustomers: customers[0]?.total || 0,
+            dailyReach: dailyReach[0]?.count || 0,
+            doNotReach: doNotReach[0]?.count || 0,
+            unsubscribed: unsubscribed[0]?.count || 0,
+            totalActivities: activities[0]?.total || 0,
+            recentActivities: recentActivities || [],
+            templates: templates[0]?.total || 0,
+            totalYatras: yatras[0]?.total || 0,
+            totalBookings: bookings[0]?.total || 0,
+            messages: messages[0]?.total || 0,
+            totalTrips: trips[0]?.total || 0,
+            recentBroadcasts: recentBroadcasts || []
+        });
+    } catch (err) {
+        console.error("Error fetching dashboard stats:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
-            if (err2) {
-              return res.status(500).json(err2);
-            }
-
-            data.templates =
-              templates[0].total;
-
-            db.query(
-              `
-              SELECT COUNT(*) AS total
-              FROM activity_logs
-              `,
-              (err3, activities) => {
-
-                if (err3) {
-                  return res.status(500).json(err3);
-                }
-
-                data.activities =
-                  activities[0].total;
-
-                db.query(
-                  `
-                  SELECT COUNT(*) AS total
-                  FROM message_logs
-                  `,
-                  (err4, messages) => {
-
-                    if (err4) {
-                      return res.status(500).json(err4);
-                    }
-
-                    data.messages =
-                      messages[0].total;
-
-                    db.query(
-                      `
-                      SELECT COUNT(*) AS total
-                      FROM yatra_master
-                      `,
-                      (err5, yatras) => {
-
-                        if (err5) {
-                          return res.status(500).json(err5);
-                        }
-
-                        data.totalYatras =
-                          yatras[0].total;
-
-                        db.query(
-                          `
-                          SELECT COUNT(*) AS total
-                          FROM yatra_bookings
-                          `,
-                          (err6, bookings) => {
-
-                            if (err6) {
-                              return res.status(500).json(err6);
-                            }
-
-                            data.totalBookings =
-                              bookings[0].total;
-
-                            db.query(
-                              `
-                              SELECT
-                                id,
-                                customer_name,
-                                mobile_number,
-                                group_type
-                              FROM customers
-                              ORDER BY id DESC
-                              LIMIT 5
-                              `,
-                              (err7, latestCustomers) => {
-
-                                if (err7) {
-                                  return res.status(500).json(err7);
-                                }
-
-                                data.latestCustomers =
-                                  latestCustomers;
-
-                                res.json(data);
-
-                              }
-                            );
-
-                          }
-                        );
-
-                      }
-                    );
-
-                  }
-                );
-
-              }
-            );
-
-          }
+/*
+=========================
+GET ACTIVITY LOGS
+=========================
+*/
+router.get("/activities", async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            "SELECT * FROM activity_logs ORDER BY id DESC LIMIT 20"
         );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching activities:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
-      }
-    );
-
-  } catch (error) {
-
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
-
-  }
-
+/*
+=========================
+GET WEEKLY TREND
+=========================
+*/
+router.get("/trend", async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as count
+            FROM activity_logs
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        `);
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching trend data:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 module.exports = router;

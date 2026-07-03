@@ -1,0 +1,95 @@
+const WebSocket = require('ws');
+const qrcode = require('qrcode');
+const { Client, LocalAuth } = require('whatsapp-web.js');
+
+const wss = new WebSocket.Server({ port: 6001 });
+
+console.log('WebSocket server running on port 6001');
+
+wss.on('connection', (ws) => {
+    console.log('New WebSocket connection');
+
+    const client = new Client({
+        authStrategy: new LocalAuth({
+            clientId: 'whatsapp_session'
+        }),
+        puppeteer: {
+            headless: true,
+            executablePath: '/usr/local/bin/chrome',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--disable-software-rasterizer'
+            ],
+            env: {
+                LD_LIBRARY_PATH: '/usr/lib/x86_64-linux-gnu:/usr/lib:/lib'
+            }
+        }
+    });
+
+    client.on('qr', (qr) => {
+        console.log('QR code generated');
+        qrcode.toDataURL(qr, (err, url) => {
+            if (err) {
+                console.error('QR generation error:', err);
+                ws.send(JSON.stringify({ type: 'error', message: 'QR generation failed' }));
+                return;
+            }
+            ws.send(JSON.stringify({ type: 'qr', qr: url }));
+        });
+    });
+
+    client.on('ready', () => {
+        console.log('WhatsApp client is ready!');
+        const number = client.info.wid.user;
+        ws.send(JSON.stringify({
+            type: 'authenticated',
+            whatsapp_number: number
+        }));
+    });
+
+    client.on('disconnected', (reason) => {
+        console.log('Disconnected:', reason);
+        ws.send(JSON.stringify({ type: 'disconnected', reason }));
+    });
+
+    client.on('auth_failure', (msg) => {
+        console.log('Auth failure:', msg);
+        ws.send(JSON.stringify({ type: 'error', message: 'Auth failed: ' + msg }));
+    });
+
+    client.on('error', (error) => {
+        console.error('Client error:', error.message);
+        ws.send(JSON.stringify({ type: 'error', message: error.message }));
+    });
+
+    console.log('Initializing WhatsApp client...');
+    client.initialize().catch(err => {
+        console.error('Init error:', err);
+        ws.send(JSON.stringify({ type: 'error', message: err.message }));
+    });
+
+    ws.on('message', async (message) => {
+        try {
+            const data = JSON.parse(message);
+            if (data.type === 'send_message') {
+                await client.sendMessage(data.to, data.message);
+                ws.send(JSON.stringify({
+                    type: 'message_sent',
+                    recipient: data.to
+                }));
+            }
+        } catch (error) {
+            console.error('Message error:', error);
+            ws.send(JSON.stringify({ type: 'error', message: error.message }));
+        }
+    });
+
+    ws.on('close', () => {
+        console.log('WebSocket connection closed');
+        client.destroy().catch(() => {});
+    });
+});

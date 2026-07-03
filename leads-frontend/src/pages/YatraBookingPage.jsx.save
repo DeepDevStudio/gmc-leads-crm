@@ -1,0 +1,725 @@
+                            {trips.map(trip => (
+                                <option key={trip.id} value={trip.id}>
+                                    {trip.trip_name} - {formatDate(trip.start_date)} ({trip.booked_seats || 0}/{trip.total_seats} seats)
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setShowTripForm(true)}
+                            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition"
+                        >
+                            + Create Trip
+                        </button>
+                        {selectedTrip && (
+                            <button
+                                onClick={() => {
+                                    setShowAddCustomer(true);
+                                    setSelectedSeats([]);
+                                    setTravelers([]);
+                                    setExtraExpensesList([]);
+                                }}
+                                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition"
+                            >
+                                + Add Customer
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Trip Details */}
+            {selectedTrip && (
+                <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+                    <h2 className="text-xl font-semibold mb-3">{selectedTrip.trip_name}</h2>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <p className="text-sm text-gray-500">Yatra</p>
+                            <p className="font-medium">{selectedTrip.yatra_name || 'N/A'}</p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Dates</p>
+                            <p className="font-medium">{formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}</p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Seats</p>
+                            <p className="font-medium">{selectedTrip.booked_seats || 0}/{selectedTrip.total_seats}</p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Rate/Seat</p>
+                            <p className="font-medium">₹{selectedTrip.rate_per_seat || 0}</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Create Trip Form */}
+            {showTripForm && (
+                <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+                    <h3 className="text-lg font-semibold mb-3">Create New Trip</h3>
+                    <form onSubmit={handleCreateTrip}>
+                        <div className="grid md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Yatra *</label>
+                                <select
+                                    required
+                                    value={tripFormData.yatra_id}
+                                    onChange={(e) => setTripFormData({...tripFormData, yatra_id: e.target.value})}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="">Select Yatra</option>
+                                    {yatras.map(yatra => (
+                                        <option key={yatra.id} value={yatra.id}>
+                                            {yatra.yatra_name} - ₹{yatra.rate_per_seat}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Trip Name *</label>
+                                <input
+                                    type="text"
+                                    required
+                                    value={tripFormData.trip_name}
+                                    onChange={(e) => setTripFormData({...tripFormData, trip_name: e.target.value})}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+                                <input
+                                    type="date"
+                                    required
+                                    value={tripFormData.start_date}
+                                    onChange={(e) => setTripFormData({...tripFormData, start_date: e.target.value})}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
+                                <input
+                                    type="date"
+                                    required
+                                    value={tripFormData.end_date}
+                                    onChange={(e) => setTripFormData({...tripFormData, end_date: e.target.value})}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Total Seats *</label>
+                                <input
+                                    type="number"
+                                    required
+                                    min="1"
+                                    value={tripFormData.total_seats}
+                                    onChange={(e) => setTripFormData({...tripFormData, total_seats: e.target.value})}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                        </div>
+                        <div className="mt-4 flex gap-3">
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                            >
+                                Create Trip
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowTripForm(false)}
+                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {/* Add Customer Form */}
+            {showAddCustomer && !showEditCustomerForm && (
+                <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+                    <h3 className="text-lg font-semibold mb-3">Add Customer to Trip</h3>
+                    <form onSubmit={handleAddCustomer}>
+                        <div className="grid md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>
+                                <input
+                                    type="text"
+                                    placeholder="Enter 10-digit phone"
+                                    value={searchPhone}
+                                    onChange={handlePhoneChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    maxLength="10"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name *</label>
+                                <input
+                                    type="text"
+                                    name="customer_name"
+                                    value={customerFormData.customer_name}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    required
+                                />
+                            </div>
+                            {foundCustomer && (
+                                <div className="md:col-span-2 bg-green-50 p-2 rounded-lg border border-green-200">
+                                    <p className="text-green-700 font-semibold">✅ Found: {foundCustomer.customer_name || 'Unknown'}</p>
+                                </div>
+                            )}
+                            {isNewCustomer && (
+                                <div className="md:col-span-2 bg-yellow-50 p-2 rounded-lg border border-yellow-200">
+                                    <p className="text-yellow-700">⚠️ New Customer - Will be added to customers list</p>
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                                <input
+                                    type="text"
+                                    name="location"
+                                    value={customerFormData.location}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Delhi, Gurgaon, etc."
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Pickup Point</label>
+                                <select
+                                    name="pickup_point"
+                                    value={customerFormData.pickup_point}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="">Select Pickup Point</option>
+                                    {pickupPoints.map((point, index) => (
+                                        <option key={point.id || index} value={point.point_name || point}>
+                                            {point.point_name || point}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Advance Amount</label>
+                                <input
+                                    type="number"
+                                    name="advance_amount"
+                                    value={customerFormData.advance_amount}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="0"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Mode</label>
+                                <select
+                                    name="payment_mode"
+                                    value={customerFormData.payment_mode}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="Cash">Cash</option>
+                                    <option value="UPI">UPI</option>
+                                    <option value="Bank Transfer">Bank Transfer</option>
+                                    <option value="Card">Card</option>
+                                </select>
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                                <textarea
+                                    name="remarks"
+                                    value={customerFormData.remarks}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    rows="2"
+                                    placeholder="Any special remarks..."
+                                />
+                            </div>
+                        </div>
+
+                        {/* Travelers */}
+                        <div className="mt-4">
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="block text-sm font-medium text-gray-700">Travelers</label>
+                                <button
+                                    type="button"
+                                    onClick={addTraveler}
+                                    className="text-blue-500 hover:text-blue-700 text-sm font-medium"
+                                >
+                                    + Add Traveler
+                                </button>
+                            </div>
+                            {travelers.map((traveler, index) => (
+                                <div key={index} className="bg-gray-50 p-3 rounded-lg mb-2 border">
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="Name"
+                                            value={traveler.traveler_name}
+                                            onChange={(e) => updateTraveler(index, 'traveler_name', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        />
+                                        <input
+                                            type="text"
+                                            placeholder="Phone"
+                                            value={traveler.phone}
+                                            onChange={(e) => updateTraveler(index, 'phone', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        />
+                                        <input
+                                            type="number"
+                                            placeholder="Age"
+                                            value={traveler.age}
+                                            onChange={(e) => updateTraveler(index, 'age', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        />
+                                        <select
+                                            value={traveler.gender}
+                                            onChange={(e) => updateTraveler(index, 'gender', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        >
+                                            <option value="Male">Male</option>
+                                            <option value="Female">Female</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => removeTraveler(index)}
+                                        className="text-red-500 hover:text-red-700 text-sm mt-1"
+                                    >
+                                        ✕ Remove
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Extra Expenses */}
+                        <div className="mt-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Extra Expenses</label>
+                            <div className="flex gap-2 mb-2">
+                                <input
+                                    type="text"
+                                    placeholder="Expense name"
+                                    value={newExpenseName}
+                                    onChange={(e) => setNewExpenseName(e.target.value)}
+                                    className="flex-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                                <input
+                                    type="number"
+                                    placeholder="Amount"
+                                    value={newExpenseAmount}
+                                    onChange={(e) => setNewExpenseAmount(e.target.value)}
+                                    className="w-32 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={addExtraExpense}
+                                    className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition"
+                                >
+                                    Add
+                                </button>
+                            </div>
+                            {extraExpensesList.length > 0 && (
+                                <div className="bg-gray-50 p-2 rounded-lg">
+                                    {extraExpensesList.map((expense, index) => (
+                                        <div key={index} className="flex justify-between items-center py-1 border-b">
+                                            <span>{expense.name}</span>
+                                            <span>₹{expense.amount}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => removeExtraExpense(index)}
+                                                className="text-red-500 hover:text-red-700 text-sm"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ===== SEAT SELECTION - BUS LAYOUT ===== */}
+                        <div className="md:col-span-2 mt-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-3">
+                                🚐 Select Seats (Choose {getTotalSeats()} seats)
+                            </label>
+                            <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-xl p-4 md:p-6 border-2 border-gray-200 shadow-inner">
+                                {selectedTrip?.seats && selectedTrip.seats.length > 0 ? (
+                                    <>
+                                        <div className="relative max-w-3xl mx-auto">
+                                            <div className="bg-white rounded-2xl shadow-xl border-4 border-gray-700 p-3 md:p-6">
+                                                
+                                                {/* Driver Section */}
+                                                <div className="flex justify-start mb-3 md:mb-4">
+                                                    <div className="bg-gradient-to-r from-gray-200 to-gray-300 rounded-lg px-3 md:px-4 py-1.5 md:py-2 text-center border-2 border-gray-400 shadow-md">
+                                                        <div className="text-xl md:text-2xl">🚗</div>
+                                                        <div className="text-[8px] md:text-[10px] font-bold text-gray-600 uppercase tracking-wider">Driver</div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Seats Grid */}
+                                                {renderSeats(selectedTrip.seats, false)}
+
+                                                {/* Legend */}
+                                                <div className="flex flex-wrap items-center justify-center gap-2 md:gap-4 mt-3 md:mt-4 pt-3 border-t-2 border-gray-200">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-4 h-4 bg-white border-2 border-gray-300 rounded-lg"></div>
+                                                        <span className="text-[10px] md:text-xs text-gray-600">Available</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-4 h-4 bg-yellow-400 border-2 border-yellow-600 rounded-lg"></div>
+                                                        <span className="text-[10px] md:text-xs text-gray-600">Selected ({selectedSeats.length})</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-4 h-4 bg-red-100 border-2 border-red-400 rounded-lg"></div>
+                                                        <span className="text-[10px] md:text-xs text-gray-600">Booked</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[10px] md:text-xs font-medium text-blue-600">
+                                                            🎯 Need {getTotalSeats()} seats
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Status Message */}
+                                                <div className="text-center mt-3">
+                                                    {selectedSeats.length === 0 && (
+                                                        <p className="text-[10px] md:text-xs text-gray-500">
+                                                            💡 Click on available seats to select them
+                                                        </p>
+                                                    )}
+                                                    {selectedSeats.length > 0 && selectedSeats.length < getTotalSeats() && (
+                                                        <p className="text-[10px] md:text-xs text-yellow-600 font-medium">
+                                                            ⚠️ Selected {selectedSeats.length} of {getTotalSeats()} seats needed
+                                                        </p>
+                                                    )}
+                                                    {selectedSeats.length === getTotalSeats() && (
+                                                        <p className="text-[10px] md:text-xs text-green-600 font-medium">
+                                                            ✅ All {getTotalSeats()} seats selected!
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <p className="text-gray-500 text-sm text-center py-4">
+                                        No seats available for this trip. Please create the trip first.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="mt-4 flex gap-3">
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                            >
+                                {loading ? 'Adding...' : 'Add Customer'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowAddCustomer(false);
+                                    setTravelers([]);
+                                    setSelectedSeats([]);
+                                    setExtraExpensesList([]);
+                                    setSearchPhone('');
+                                    setFoundCustomer(null);
+                                    setIsNewCustomer(false);
+                                }}
+                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {/* Edit Customer Form */}
+            {showEditCustomerForm && editingCustomer && (
+                <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+                    <h3 className="text-lg font-semibold mb-3">Edit Customer</h3>
+                    <form onSubmit={handleUpdateCustomer}>
+                        <div className="grid md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name</label>
+                                <input
+                                    type="text"
+                                    name="customer_name"
+                                    value={customerFormData.customer_name}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                                <input
+                                    type="text"
+                                    value={customerFormData.phone}
+                                    disabled
+                                    className="w-full p-2 border rounded-lg bg-gray-100"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Pickup Point</label>
+                                <select
+                                    name="pickup_point"
+                                    value={customerFormData.pickup_point}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    <option value="">Select Pickup Point</option>
+                                    {pickupPoints.map((point, index) => (
+                                        <option key={point.id || index} value={point.point_name || point}>
+                                            {point.point_name || point}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Advance Amount</label>
+                                <input
+                                    type="number"
+                                    name="advance_amount"
+                                    value={customerFormData.advance_amount}
+                                    onChange={handleCustomerInputChange}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Travelers for Edit */}
+                        <div className="mt-4">
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="block text-sm font-medium text-gray-700">Travelers</label>
+                                <button
+                                    type="button"
+                                    onClick={addTraveler}
+                                    className="text-blue-500 hover:text-blue-700 text-sm font-medium"
+                                >
+                                    + Add Traveler
+                                </button>
+                            </div>
+                            {travelers.map((traveler, index) => (
+                                <div key={index} className="bg-gray-50 p-3 rounded-lg mb-2 border">
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="Name"
+                                            value={traveler.traveler_name}
+                                            onChange={(e) => updateTraveler(index, 'traveler_name', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        />
+                                        <input
+                                            type="text"
+                                            placeholder="Phone"
+                                            value={traveler.phone}
+                                            onChange={(e) => updateTraveler(index, 'phone', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        />
+                                        <input
+                                            type="number"
+                                            placeholder="Age"
+                                            value={traveler.age}
+                                            onChange={(e) => updateTraveler(index, 'age', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        />
+                                        <select
+                                            value={traveler.gender}
+                                            onChange={(e) => updateTraveler(index, 'gender', e.target.value)}
+                                            className="p-1 border rounded text-sm"
+                                        >
+                                            <option value="Male">Male</option>
+                                            <option value="Female">Female</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => removeTraveler(index)}
+                                        className="text-red-500 hover:text-red-700 text-sm mt-1"
+                                    >
+                                        ✕ Remove
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* ===== SEAT SELECTION - BUS LAYOUT (EDIT MODE) ===== */}
+                        <div className="md:col-span-2 mt-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-3">
+                                🚐 Select Seats (Choose {1 + travelers.length} seats)
+                            </label>
+                            <div className="bg-gradient-to-br from-slate-50 to-gray-50 rounded-xl p-4 md:p-6 border-2 border-gray-200 shadow-inner">
+                                {selectedTrip?.seats && selectedTrip.seats.length > 0 ? (
+                                    <>
+                                        <div className="relative max-w-3xl mx-auto">
+                                            <div className="bg-white rounded-2xl shadow-xl border-4 border-gray-700 p-3 md:p-6">
+                                                
+                                                {/* Driver Section */}
+                                                <div className="flex justify-start mb-3 md:mb-4">
+                                                    <div className="bg-gradient-to-r from-gray-200 to-gray-300 rounded-lg px-3 md:px-4 py-1.5 md:py-2 text-center border-2 border-gray-400 shadow-md">
+                                                        <div className="text-xl md:text-2xl">🚗</div>
+                                                        <div className="text-[8px] md:text-[10px] font-bold text-gray-600 uppercase tracking-wider">Driver</div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Seats Grid - Edit Mode */}
+                                                {renderSeats(selectedTrip.seats, true, editingCustomer?.id)}
+
+                                                {/* Legend */}
+                                                <div className="flex flex-wrap items-center justify-center gap-2 md:gap-4 mt-3 md:mt-4 pt-3 border-t-2 border-gray-200">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-4 h-4 bg-white border-2 border-gray-300 rounded-lg"></div>
+                                                        <span className="text-[10px] md:text-xs text-gray-600">Available</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-4 h-4 bg-yellow-400 border-2 border-yellow-600 rounded-lg"></div>
+                                                        <span className="text-[10px] md:text-xs text-gray-600">Selected ({selectedSeats.length})</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-4 h-4 bg-red-100 border-2 border-red-400 rounded-lg"></div>
+                                                        <span className="text-[10px] md:text-xs text-gray-600">Booked</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[10px] md:text-xs font-medium text-blue-600">
+                                                            🎯 Need {1 + travelers.length} seats
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Status Message */}
+                                                <div className="text-center mt-3">
+                                                    {selectedSeats.length === 0 && (
+                                                        <p className="text-[10px] md:text-xs text-gray-500">
+                                                            💡 Click on available seats to select them
+                                                        </p>
+                                                    )}
+                                                    {selectedSeats.length > 0 && selectedSeats.length < (1 + travelers.length) && (
+                                                        <p className="text-[10px] md:text-xs text-yellow-600 font-medium">
+                                                            ⚠️ Selected {selectedSeats.length} of {1 + travelers.length} seats needed
+                                                        </p>
+                                                    )}
+                                                    {selectedSeats.length === (1 + travelers.length) && (
+                                                        <p className="text-[10px] md:text-xs text-green-600 font-medium">
+                                                            ✅ All {1 + travelers.length} seats selected!
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <p className="text-gray-500 text-sm text-center py-4">
+                                        No seats available for this trip.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="mt-4 flex gap-3">
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                            >
+                                {loading ? 'Updating...' : 'Update Customer'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowEditCustomerForm(false);
+                                    setEditingCustomer(null);
+                                    setTravelers([]);
+                                    setSelectedSeats([]);
+                                    setEditExtraExpensesList([]);
+                                }}
+                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {/* Customers List */}
+            {selectedTrip && (
+                <div className="bg-white rounded-lg shadow-md p-4">
+                    <h3 className="text-lg font-semibold mb-3">Customers on this Trip</h3>
+                    {selectedTrip.customers && selectedTrip.customers.length > 0 ? (
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="bg-gray-50">
+                                        <th className="p-2 text-left text-sm font-semibold">#</th>
+                                        <th className="p-2 text-left text-sm font-semibold">Customer</th>
+                                        <th className="p-2 text-left text-sm font-semibold">Phone</th>
+                                        <th className="p-2 text-left text-sm font-semibold">Seats</th>
+                                        <th className="p-2 text-left text-sm font-semibold">Amount</th>
+                                        <th className="p-2 text-left text-sm font-semibold">Advance</th>
+                                        <th className="p-2 text-left text-sm font-semibold">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {selectedTrip.customers.map((customer, index) => (
+                                        <tr key={customer.id} className="border-t">
+                                            <td className="p-2 text-sm">{index + 1}</td>
+                                            <td className="p-2 text-sm font-medium">{customer.customer_name}</td>
+                                            <td className="p-2 text-sm">{customer.phone}</td>
+                                            <td className="p-2 text-sm">{customer.total_seats} ({customer.seat_numbers?.join(', ') || 'N/A'})</td>
+                                            <td className="p-2 text-sm">₹{customer.total_amount || 0}</td>
+                                            <td className="p-2 text-sm">₹{customer.advance_amount || 0}</td>
+                                            <td className="p-2 text-sm">
+                                                <button
+                                                    onClick={() => {
+                                                        setEditingCustomer(customer);
+                                                        setCustomerFormData({
+                                                            customer_id: customer.customer_id || '',
+                                                            customer_name: customer.customer_name,
+                                                            phone: customer.phone,
+                                                            location: customer.location || '',
+                                                            pickup_point: customer.pickup_point || '',
+                                                            total_seats: customer.total_seats || 1,
+                                                            advance_amount: customer.advance_amount || '',
+                                                            advance_collected_by: customer.advance_collected_by || 'GMC',
+                                                            advance_collected_date: customer.advance_collected_date || '',
+                                                            referral_id: customer.referral_id || '',
+                                                            payment_mode: customer.payment_mode || 'Cash',
+                                                            remarks: customer.remarks || '',
+                                                        });
+                                                        setSelectedSeats(customer.seat_numbers || []);
+                                                        setTravelers(customer.travelers || []);
+                                                        setEditExtraExpensesList(customer.extra_expenses || []);
+                                                        setShowEditCustomerForm(true);
+                                                    }}
+                                                    className="text-blue-500 hover:text-blue-700 text-sm"
+                                                >
+                                                    Edit
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <p className="text-gray-500 text-sm">No customers added yet.</p>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default YatraBookingPage;

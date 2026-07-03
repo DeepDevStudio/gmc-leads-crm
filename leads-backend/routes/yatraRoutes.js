@@ -1,207 +1,145 @@
 const express = require("express");
 const router = express.Router();
-
 const db = require("../config/db");
 
 /*
-====================
-GET ALL YATRAS
-====================
+=========================
+GET ALL YATRAS WITH TRIP COUNTS
+=========================
 */
-router.get("/", (req, res) => {
-
-  db.query(
-    `
-    SELECT *
-    FROM yatra_master
-    ORDER BY id DESC
-    `,
-    (err, rows) => {
-
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
-
-      res.json(rows);
-
+router.get("/", async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT ym.*, 
+                   COUNT(yt.id) as trip_count
+            FROM yatra_master ym
+            LEFT JOIN yatra_trips yt ON ym.id = yt.yatra_id
+            GROUP BY ym.id
+            ORDER BY ym.id DESC
+        `);
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching yatras:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
-
 });
 
 /*
-====================
+=========================
 GET SINGLE YATRA
-====================
+=========================
 */
-router.get("/:id", (req, res) => {
+router.get("/:id", async (req, res) => {
+    const { id } = req.params;
 
-  db.query(
-    `
-    SELECT *
-    FROM yatra_master
-    WHERE id = ?
-    `,
-    [req.params.id],
-    (err, rows) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT ym.*, 
+                   COUNT(yt.id) as trip_count
+            FROM yatra_master ym
+            LEFT JOIN yatra_trips yt ON ym.id = yt.yatra_id
+            WHERE ym.id = ?
+            GROUP BY ym.id
+        `, [id]);
 
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
+        if (rows.length === 0) {
+            return res.status(404).json({ message: "Yatra not found" });
+        }
 
-      if (
-        rows.length === 0
-      ) {
-        return res
-          .status(404)
-          .json({
-            message:
-              "Yatra not found",
-          });
-      }
-
-      res.json(
-        rows[0]
-      );
-
+        res.json(rows[0]);
+    } catch (err) {
+        console.error("Error fetching yatra:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
-
 });
 
 /*
-====================
+=========================
 CREATE YATRA
-====================
+=========================
 */
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
+    const { yatra_name, start_date, end_date, rate_per_seat, status } = req.body;
 
-  const {
-    yatra_name,
-    start_date,
-    end_date,
-    rate_per_seat,
-  } = req.body;
-
-  db.query(
-    `
-    INSERT INTO yatra_master
-    (
-      yatra_name,
-      start_date,
-      end_date,
-      rate_per_seat
-    )
-    VALUES (?, ?, ?, ?)
-    `,
-    [
-      yatra_name,
-      start_date,
-      end_date,
-      rate_per_seat,
-    ],
-    (err, result) => {
-
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
-
-      res.json({
-        success: true,
-        id: result.insertId,
-      });
-
+    if (!yatra_name) {
+        return res.status(400).json({ error: "Yatra name is required" });
     }
-  );
 
+    try {
+        const [result] = await db.query(
+            `INSERT INTO yatra_master (yatra_name, start_date, end_date, rate_per_seat, status)
+             VALUES (?, ?, ?, ?, ?)`,
+            [yatra_name, start_date || null, end_date || null, rate_per_seat || 0, status || 'active']
+        );
+
+        res.status(201).json({
+            success: true,
+            id: result.insertId,
+            message: "Yatra created successfully"
+        });
+    } catch (err) {
+        console.error("Error creating yatra:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /*
-====================
+=========================
 UPDATE YATRA
-====================
+=========================
 */
-router.put("/:id", (req, res) => {
+router.put("/:id", async (req, res) => {
+    const { id } = req.params;
+    const { yatra_name, start_date, end_date, rate_per_seat, status } = req.body;
 
-  const {
-    yatra_name,
-    start_date,
-    end_date,
-    rate_per_seat,
-    status,
-  } = req.body;
+    try {
+        const [result] = await db.query(
+            `UPDATE yatra_master 
+             SET yatra_name = ?, start_date = ?, end_date = ?, rate_per_seat = ?, status = ?
+             WHERE id = ?`,
+            [yatra_name, start_date || null, end_date || null, rate_per_seat || 0, status || 'active', id]
+        );
 
-  db.query(
-    `
-    UPDATE yatra_master
-    SET
-      yatra_name = ?,
-      start_date = ?,
-      end_date = ?,
-      rate_per_seat = ?,
-      status = ?
-    WHERE id = ?
-    `,
-    [
-      yatra_name,
-      start_date,
-      end_date,
-      rate_per_seat,
-      status,
-      req.params.id,
-    ],
-    (err) => {
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Yatra not found" });
+        }
 
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
-
-      res.json({
-        success: true,
-      });
-
+        res.json({
+            success: true,
+            message: "Yatra updated successfully"
+        });
+    } catch (err) {
+        console.error("Error updating yatra:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
-
 });
 
 /*
-====================
+=========================
 DELETE YATRA
-====================
+=========================
 */
-router.delete("/:id", (req, res) => {
+router.delete("/:id", async (req, res) => {
+    const { id } = req.params;
 
-  db.query(
-    `
-    DELETE
-    FROM yatra_master
-    WHERE id = ?
-    `,
-    [req.params.id],
-    (err) => {
+    try {
+        const [result] = await db.query(
+            "DELETE FROM yatra_master WHERE id = ?",
+            [id]
+        );
 
-      if (err) {
-        return res
-          .status(500)
-          .json(err);
-      }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Yatra not found" });
+        }
 
-      res.json({
-        success: true,
-      });
-
+        res.json({
+            success: true,
+            message: "Yatra deleted successfully"
+        });
+    } catch (err) {
+        console.error("Error deleting yatra:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
-
 });
 
 module.exports = router;
