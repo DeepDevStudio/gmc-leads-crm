@@ -1,28 +1,81 @@
-import axios from "axios";
-
-const API = "/api/campaigns";
+import api from './api';
 
 export const getCampaigns = async () => {
-    const response = await axios.get(API);
-    return response.data;
+    try {
+        const response = await api.get('/campaigns');
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching campaigns:', error);
+        throw error;
+    }
 };
 
 export const createCampaign = async (data) => {
-    const response = await axios.post(API, data);
-    return response.data;
+    try {
+        const response = await api.post('/campaigns', data);
+        return response.data;
+    } catch (error) {
+        console.error('Error creating campaign:', error);
+        throw error;
+    }
 };
 
 export const updateCampaign = async (id, data) => {
-    const response = await axios.put(`${API}/${id}`, data);
-    return response.data;
+    try {
+        const response = await api.put(`/campaigns/${id}`, data);
+        return response.data;
+    } catch (error) {
+        console.error('Error updating campaign:', error);
+        throw error;
+    }
 };
 
 export const deleteCampaign = async (id) => {
-    const response = await axios.delete(`${API}/${id}`);
-    return response.data;
+    try {
+        const response = await api.delete(`/campaigns/${id}`);
+        return response.data;
+    } catch (error) {
+        console.error('Error deleting campaign:', error);
+        throw error;
+    }
 };
 
 export const sendCampaign = async (id) => {
-    const response = await axios.post(`${API}/${id}/send`);
-    return response.data;
+    try {
+        const response = await api.post(`/campaigns/${id}/send`);
+        return response.data;
+    } catch (error) {
+        console.error('Error sending campaign:', error);
+        throw error;
+    }
+};
+
+export const duplicateCampaign = async (id) => {
+    try {
+        const response = await api.post(`/campaigns/${id}/duplicate`);
+        return response.data;
+    } catch (error) {
+        console.error('Error duplicating campaign:', error);
+        throw error;
+    }
+};
+
+export const getCampaignAnalytics = async (id) => {
+    try {
+        const response = await api.get(`/campaigns/${id}/analytics`);
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching campaign analytics:', error);
+        throw error;
+    }
+};
+
+export const getAudiencePreview = async (id) => {
+    try {
+        const response = await api.post(`/campaigns/${id}/audience-preview`);
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching audience preview:', error);
+        throw error;
+    }
 };

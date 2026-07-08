@@ -5,7 +5,7 @@ function DoNotReach() {
     <CustomerGroupPage
       title="Do Not Reach Customers"
       description="Customers who should not receive messages"
-      groupType="do-not-reach"
+      groupType="Do Not Reach"
       color="red"
       moveToGroup="Daily Reach"
       moveToLabel="Move to Daily Reach"

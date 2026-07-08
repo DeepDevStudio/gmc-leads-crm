@@ -1,0 +1,2 @@
+// API Configuration
+export const API_BASE = 'http://31.97.62.121:5000/api';

@@ -1,141 +1,1639 @@
-import React, { useEffect, useState } from "react";
-import { getInterests } from "../services/interestService";
-import { getTemplates } from "../services/templateService";
-import { previewBroadcast } from "../services/broadcastService";
+import React, { useState, useEffect, useRef } from 'react';
+import api from '../services/api';
+import { getTemplates } from '../services/templateService';
+import { getInterests } from '../services/interestService';
 
-function BroadcastPage() {
-  const [interests, setInterests] = useState([]);
-  const [templates, setTemplates] = useState([]);
-  const [customers, setCustomers] = useState([]);
-  const [selectedInterest, setSelectedInterest] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState("");
-  const [loading, setLoading] = useState(false);
+const BroadcastPage = () => {
+    // ===== TEST MODE =====
+    const [testMode, setTestMode] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+    // ===== TEAM MEMBERS STATE =====
+    const [teamMembers, setTeamMembers] = useState([
+        { id: 1, name: 'Member 1', role: 'employee', dailyLimit: 250, todaySent: 0, isConnected: false, whatsappNumber: '' },
+        { id: 2, name: 'Member 2', role: 'employee', dailyLimit: 250, todaySent: 0, isConnected: false, whatsappNumber: '' },
+        { id: 3, name: 'Member 3', role: 'employee', dailyLimit: 250, todaySent: 0, isConnected: false, whatsappNumber: '' },
+        { id: 4, name: 'Member 4', role: 'employee', dailyLimit: 250, todaySent: 0, isConnected: false, whatsappNumber: '' },
+    ]);
+    const [editingMember, setEditingMember] = useState(null);
+    const [showEditMember, setShowEditMember] = useState(false);
+    const [editMemberName, setEditMemberName] = useState('');
+    const [editMemberId, setEditMemberId] = useState(null);
 
-  const loadData = async () => {
-    try {
-      const interestsData = await getInterests();
-      const templatesData = await getTemplates();
-      setInterests(interestsData || []);
-      setTemplates(templatesData || []);
-    } catch (error) {
-      console.error("Error loading data:", error);
-    }
-  };
+    // ===== NUMBER ASSIGNMENT =====
+    const [showAssignModal, setShowAssignModal] = useState(false);
+    const [assignMember, setAssignMember] = useState('Member 1');
+    const [assignPhone, setAssignPhone] = useState('');
+    const [assignLoading, setAssignLoading] = useState(false);
 
-  const handlePreview = async () => {
-    if (!selectedInterest) {
-      alert("Please select an interest first");
-      return;
-    }
+    // ===== WHATSAPP STATE =====
+    const [qrCodes, setQrCodes] = useState({});
+    const [memberStatus, setMemberStatus] = useState({});
+    const [statusMessage, setStatusMessage] = useState('Connecting...');
+    const wsRef = useRef(null);
 
-    setLoading(true);
-    try {
-      const data = await previewBroadcast(selectedInterest);
-      setCustomers(data || []);
-    } catch (error) {
-      console.error("Error previewing broadcast:", error);
-      alert("Failed to preview customers. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
+    // ===== BROADCAST STATE =====
+    const [loading, setLoading] = useState(false);
+    const [templates, setTemplates] = useState([]);
+    const [interests, setInterests] = useState([]);
+    const [yatras, setYatras] = useState([]);
+    const [selectedInterests, setSelectedInterests] = useState([]);
+    const [selectedYatra, setSelectedYatra] = useState('');
+    const [selectedTemplate, setSelectedTemplate] = useState('');
+    const [customMessage, setCustomMessage] = useState('');
+    const [targetGroup, setTargetGroup] = useState('Daily Reach');
+    const [previewCount, setPreviewCount] = useState(0);
+    const [previewCustomers, setPreviewCustomers] = useState([]);
+    const [showPreview, setShowPreview] = useState(false);
+    const [message, setMessage] = useState({ text: "", type: "" });
+    const [selectedMember, setSelectedMember] = useState('Member 1');
+    const [memberTodaySent, setMemberTodaySent] = useState(0);
+    const [messageLogs, setMessageLogs] = useState([]);
+    const [selectedPreset, setSelectedPreset] = useState('');
+    const [attachmentFile, setAttachmentFile] = useState(null);
+    const [attachmentName, setAttachmentName] = useState('');
+    const [attachmentBase64, setAttachmentBase64] = useState('');
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">WhatsApp Broadcast</h1>
-        <p className="text-gray-500">Send Manual Campaigns</p>
-      </div>
+    // ===== PRESET MANAGEMENT STATE =====
+    const [presetMessages, setPresetMessages] = useState([]);
+    const [showPresetModal, setShowPresetModal] = useState(false);
+    const [editingPreset, setEditingPreset] = useState(null);
+    const [presetFormData, setPresetFormData] = useState({ name: '', message: '' });
+    const [presetLoading, setPresetLoading] = useState(false);
 
-      <div className="bg-white rounded-2xl shadow border p-6">
-        <div className="grid md:grid-cols-2 gap-5">
-          <div>
-            <label className="block mb-2">Campaign Name</label>
-            <input
-              className="w-full border p-3 rounded-xl"
-              placeholder="Char Dham June Campaign"
-            />
-          </div>
-          <div>
-            <label className="block mb-2">Select Interest</label>
-            <select
-              value={selectedInterest}
-              onChange={(e) => setSelectedInterest(e.target.value)}
-              className="w-full border p-3 rounded-xl"
-            >
-              <option value="">Select Interest</option>
-              {interests.map((interest) => (
-                <option key={interest.id} value={interest.interest_name}>
-                  {interest.interest_name}
-                </option>
-              ))}
-            </select>
-          </div>
+    // ===== AUTOMATION RULES STATE =====
+    const [automationRules, setAutomationRules] = useState([]);
+    const [selectedRule, setSelectedRule] = useState('');
+    const [useRule, setUseRule] = useState(false);
+
+    // ===== AUTO BROADCAST STATE =====
+    const [autoMode, setAutoMode] = useState(false);
+    const [autoStatus, setAutoStatus] = useState(null);
+    const [broadcastId, setBroadcastId] = useState(null);
+    const [memberStats, setMemberStats] = useState([]);
+
+    // ===== STATS =====
+    const [stats, setStats] = useState({
+        totalMessages: 0,
+        todaySent: 0,
+        dailyLimit: 1000,
+        connectedMembers: 0
+    });
+
+    // ===== EFFECTS =====
+    useEffect(() => {
+        loadAllData();
+        connectWhatsApp();
+        loadMemberStats();
+        
+        return () => {
+            if (wsRef.current) {
+                wsRef.current.close();
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        calculateStats();
+    }, [messageLogs, teamMembers]);
+
+    // ===== LOAD ALL DATA =====
+    const loadAllData = async () => {
+        await Promise.all([
+            loadTemplates(),
+            loadInterests(),
+            loadYatras(),
+            loadMessageLogs(),
+            loadPresets(),
+            loadAutomationRules()
+        ]);
+    };
+
+    const loadTemplates = async () => {
+        try {
+            const data = await getTemplates();
+            setTemplates(data.filter(t => t.status === 'Active') || []);
+        } catch (error) {
+            console.error('Error loading templates:', error);
+        }
+    };
+
+    const loadInterests = async () => {
+        try {
+            const data = await getInterests();
+            setInterests(data || []);
+        } catch (error) {
+            console.error('Error loading interests:', error);
+        }
+    };
+
+    const loadYatras = async () => {
+        try {
+            const response = await api.get('/api/yatras');
+            setYatras(response.data || []);
+        } catch (error) {
+            console.error('Error loading yatras:', error);
+            setYatras([]);
+        }
+    };
+
+    const loadMessageLogs = async () => {
+        try {
+            const response = await api.get('/api/whatsapp/logs');
+            setMessageLogs(response.data || []);
+        } catch (error) {
+            console.error('Error loading message logs:', error);
+            setMessageLogs([]);
+        }
+    };
+
+    const loadPresets = async () => {
+        try {
+            const response = await api.get('/api/presets');
+            setPresetMessages(response.data || []);
+        } catch (error) {
+            console.error('Error loading presets:', error);
+            setPresetMessages([]);
+        }
+    };
+
+    const loadAutomationRules = async () => {
+        try {
+            const response = await api.get('/api/automation/rules');
+            setAutomationRules(response.data || []);
+        } catch (error) {
+            console.error('Error loading automation rules:', error);
+            setAutomationRules([]);
+        }
+    };
+
+    const loadMemberStats = async () => {
+        try {
+            console.log('📤 Loading member stats...');
+            const response = await api.get('/api/auto-broadcast/members/stats');
+            console.log('📥 Member stats loaded:', response.data);
+            setMemberStats(response.data || []);
+        } catch (error) {
+            console.error('❌ Error loading member stats:', error.message);
+            setMemberStats([
+                { memberName: 'Member 1', todaySent: 0, dailyLimit: 250, remaining: 250 },
+                { memberName: 'Member 2', todaySent: 0, dailyLimit: 250, remaining: 250 },
+                { memberName: 'Member 3', todaySent: 0, dailyLimit: 250, remaining: 250 },
+                { memberName: 'Member 4', todaySent: 0, dailyLimit: 250, remaining: 250 }
+            ]);
+        }
+    };
+
+    const calculateStats = () => {
+        const totalMessages = messageLogs.length;
+        const todaySent = messageLogs.filter(log => {
+            const today = new Date().toDateString();
+            return new Date(log.created_at).toDateString() === today;
+        }).length;
+        const connectedMembers = teamMembers.filter(m => m.isConnected).length;
+        setStats({ totalMessages, todaySent, dailyLimit: 1000, connectedMembers });
+    };
+
+    // ===== ASSIGN NUMBER TO MEMBER =====
+    const handleAssignNumber = async () => {
+        if (!assignPhone || assignPhone.length < 10) {
+            showMessage('Please enter a valid 10-digit phone number', 'error');
+            return;
+        }
+
+        setAssignLoading(true);
+        try {
+            await api.post('/api/broadcast/assign-number', {
+                memberName: assignMember,
+                phoneNumber: assignPhone
+            });
+            showMessage(`✅ Number ${assignPhone} assigned to ${assignMember}`, 'success');
+            setShowAssignModal(false);
+            setAssignPhone('');
+            // Refresh status
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: 'get_all_status' }));
+            }
+        } catch (error) {
+            console.error('Error assigning number:', error);
+            showMessage('Failed to assign number', 'error');
+        } finally {
+            setAssignLoading(false);
+        }
+    };
+
+    // ===== CONNECT WHATSAPP VIA WEBSOCKET =====
+    const connectWhatsApp = () => {
+        if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+            console.log('WebSocket already connected or connecting');
+            return;
+        }
+
+        try {
+            const wsUrl = `ws://${window.location.hostname}:6001`;
+            console.log('Connecting to WebSocket:', wsUrl);
+            const ws = new WebSocket(wsUrl);
+            wsRef.current = ws;
+
+            ws.onopen = () => {
+                setStatusMessage('Connected to WhatsApp service...');
+                ws.send(JSON.stringify({ type: 'get_all_status' }));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('WhatsApp event:', data);
+
+                    if (data.type === 'qr') {
+                        console.log(`📱 QR for ${data.member}`);
+                        setQrCodes(prev => ({ ...prev, [data.member]: data.qr }));
+                        setMemberStatus(prev => ({ ...prev, [data.member]: 'qr' }));
+                        showMessage(`📱 ${data.member}: Scan QR code to connect`, 'info');
+                    } else if (data.type === 'authenticated') {
+                        setQrCodes(prev => ({ ...prev, [data.member]: null }));
+                        setMemberStatus(prev => ({ ...prev, [data.member]: 'connected' }));
+                        setTeamMembers(prev => prev.map(m => 
+                            m.name === data.member 
+                                ? { ...m, isConnected: true, whatsappNumber: data.whatsapp_number }
+                                : m
+                        ));
+                        showMessage(`✅ ${data.member} connected!`, 'success');
+                        loadMemberStats();
+                    } else if (data.type === 'disconnected') {
+                        setMemberStatus(prev => ({ ...prev, [data.member]: 'disconnected' }));
+                        setTeamMembers(prev => prev.map(m => 
+                            m.name === data.member 
+                                ? { ...m, isConnected: false }
+                                : m
+                        ));
+                    } else if (data.type === 'logged_out') {
+                        setMemberStatus(prev => ({ ...prev, [data.member]: 'disconnected' }));
+                        setTeamMembers(prev => prev.map(m => 
+                            m.name === data.member 
+                                ? { ...m, isConnected: false, whatsappNumber: '' }
+                                : m
+                        ));
+                        setQrCodes(prev => ({ ...prev, [data.member]: null }));
+                        showMessage(`🔄 ${data.member} logged out. Click Connect to login again.`, 'info');
+                    } else if (data.type === 'qr_ready') {
+                        showMessage(`📱 ${data.member}: Click Connect to get new QR code`, 'info');
+                    } else if (data.type === 'message_sent') {
+                        showMessage(`✅ ${data.member}: Message sent to ${data.recipient}`, 'success');
+                        loadMessageLogs();
+                    } else if (data.type === 'status' || data.type === 'all_status') {
+                        if (data.members) {
+                            data.members.forEach(member => {
+                                if (member.status === 'connected') {
+                                    setTeamMembers(prev => prev.map(m => 
+                                        m.name === member.member 
+                                            ? { ...m, isConnected: true, whatsappNumber: member.whatsapp_number }
+                                            : m
+                                    ));
+                                    setMemberStatus(prev => ({ ...prev, [member.member]: 'connected' }));
+                                    setQrCodes(prev => ({ ...prev, [member.member]: null }));
+                                } else if (member.status === 'qr' && member.qr) {
+                                    setQrCodes(prev => ({ ...prev, [member.member]: member.qr }));
+                                    setMemberStatus(prev => ({ ...prev, [member.member]: 'qr' }));
+                                } else {
+                                    setMemberStatus(prev => ({ ...prev, [member.member]: 'disconnected' }));
+                                }
+                            });
+                        }
+                    } else if (data.type === 'error') {
+                        showMessage(`❌ Error: ${data.message}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+            ws.onerror = () => {
+                setStatusMessage('⚠️ Connection error');
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+                setTimeout(() => connectWhatsApp(), 3000);
+            };
+        } catch (error) {
+            console.error('WebSocket connection error:', error);
+            setStatusMessage('❌ Could not connect to WhatsApp service');
+        }
+    };
+
+    // ===== LOGOUT SINGLE MEMBER =====
+    const handleLogoutMember = (memberName) => {
+        if (!window.confirm(`Logout "${memberName}" from WhatsApp?`)) return;
+        
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ 
+                type: 'logout_member', 
+                memberName: memberName 
+            }));
+            setMemberStatus(prev => ({ ...prev, [memberName]: 'disconnected' }));
+            setTeamMembers(prev => prev.map(m => 
+                m.name === memberName 
+                    ? { ...m, isConnected: false, whatsappNumber: '' }
+                    : m
+            ));
+            setQrCodes(prev => ({ ...prev, [memberName]: null }));
+            showMessage(`🔄 ${memberName} logged out. New QR will be generated.`, 'info');
+        }
+    };
+
+    // ===== LOGIN SINGLE MEMBER =====
+    const handleLoginMember = (memberName) => {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            setQrCodes(prev => ({ ...prev, [memberName]: null }));
+            setMemberStatus(prev => ({ ...prev, [memberName]: 'connecting' }));
+            
+            wsRef.current.send(JSON.stringify({ 
+                type: 'login_member', 
+                memberName: memberName 
+            }));
+            showMessage(`🔄 Connecting ${memberName}...`, 'info');
+        }
+    };
+
+    // ===== EDIT MEMBER NAME =====
+    const handleEditMember = (member) => {
+        setEditMemberId(member.id);
+        setEditMemberName(member.name);
+        setEditingMember(member);
+        setShowEditMember(true);
+    };
+
+    const handleSaveMemberName = () => {
+        if (!editMemberName.trim()) {
+            showMessage('Please enter a name', 'error');
+            return;
+        }
+        const oldName = editingMember?.name;
+        const updatedMembers = teamMembers.map(member => {
+            if (member.id === editMemberId) {
+                return { ...member, name: editMemberName.trim() };
+            }
+            return member;
+        });
+        setTeamMembers(updatedMembers);
+        
+        if (selectedMember === oldName) {
+            setSelectedMember(editMemberName.trim());
+        }
+        
+        setShowEditMember(false);
+        setEditingMember(null);
+        setEditMemberName('');
+        setEditMemberId(null);
+        showMessage(`✅ Member name updated to "${editMemberName.trim()}"`, 'success');
+    };
+
+    // ===== PRESET MANAGEMENT =====
+    const handleCreatePreset = async (e) => {
+        e.preventDefault();
+        setPresetLoading(true);
+        try {
+            await api.post('/api/presets', presetFormData);
+            showMessage('✅ Preset created successfully!', 'success');
+            loadPresets();
+            setPresetFormData({ name: '', message: '' });
+            setShowPresetModal(false);
+        } catch (error) {
+            console.error('Error creating preset:', error);
+            showMessage('Failed to create preset', 'error');
+        } finally {
+            setPresetLoading(false);
+        }
+    };
+
+    const handleUpdatePreset = async (e) => {
+        e.preventDefault();
+        setPresetLoading(true);
+        try {
+            await api.put(`/api/presets/${editingPreset.id}`, presetFormData);
+            showMessage('✅ Preset updated successfully!', 'success');
+            loadPresets();
+            setPresetFormData({ name: '', message: '' });
+            setShowPresetModal(false);
+            setEditingPreset(null);
+        } catch (error) {
+            console.error('Error updating preset:', error);
+            showMessage('Failed to update preset', 'error');
+        } finally {
+            setPresetLoading(false);
+        }
+    };
+
+    const handleDeletePreset = async (id, name) => {
+        if (!window.confirm(`Delete preset "${name}"?`)) return;
+        try {
+            await api.delete(`/api/presets/${id}`);
+            showMessage(`🗑️ "${name}" deleted!`, 'success');
+            loadPresets();
+            if (selectedPreset === String(id)) {
+                setSelectedPreset('');
+            }
+        } catch (error) {
+            console.error('Error deleting preset:', error);
+            showMessage('Failed to delete preset', 'error');
+        }
+    };
+
+    // ===== APPLY AUTOMATION RULE =====
+    const applyRule = (ruleId) => {
+        const rule = automationRules.find(r => r.id === parseInt(ruleId));
+        if (!rule) return;
+        
+        setTargetGroup(rule.target_group || 'Daily Reach');
+        setSelectedInterests(rule.target_interest ? [rule.target_interest] : []);
+        setSelectedYatra(rule.target_yatra || '');
+        setSelectedTemplate(rule.template_id || '');
+        setCustomMessage(rule.custom_message || '');
+        
+        showMessage(`✅ Applied rule: ${rule.rule_name}`, 'success');
+    };
+
+    // ===== PDF ATTACHMENT =====
+    const handleAttachmentUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (file.size > 10 * 1024 * 1024) {
+            showMessage('File size must be less than 10MB', 'error');
+            return;
+        }
+
+        if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+            showMessage('Only PDF files are allowed', 'error');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const base64 = event.target.result.split(',')[1];
+            setAttachmentBase64(base64);
+            setAttachmentName(file.name);
+            showMessage(`📎 "${file.name}" attached successfully!`, 'success');
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const removeAttachment = () => {
+        setAttachmentBase64('');
+        setAttachmentName('');
+        setAttachmentFile(null);
+        document.getElementById('fileInput').value = '';
+        showMessage('Attachment removed', 'info');
+    };
+
+    // ===== GET COMBINED MESSAGE =====
+    const getCombinedMessage = () => {
+        let parts = [];
+        
+        if (selectedTemplate) {
+            const template = templates.find(t => t.id === parseInt(selectedTemplate));
+            if (template?.message) parts.push(template.message);
+        }
+        
+        if (customMessage.trim()) {
+            parts.push(customMessage.trim());
+        }
+        
+        if (selectedPreset) {
+            const preset = presetMessages.find(p => p.id === parseInt(selectedPreset));
+            if (preset?.message) parts.push(preset.message);
+        }
+        
+        return parts.join('\n\n---\n\n');
+    };
+
+    // ===== PREVIEW =====
+    const handlePreview = async () => {
+        try {
+            setLoading(true);
+            const payload = {
+                target_group: targetGroup,
+                interests: selectedInterests,
+                yatra: selectedYatra
+            };
+            
+            console.log('📤 Preview payload:', payload);
+            const response = await api.post('/api/broadcast/preview', payload);
+            
+            console.log('📥 Preview response status:', response.status);
+            console.log('📥 Customers count:', response.data?.count || 0);
+            
+            setPreviewCustomers(response.data.customers || []);
+            setPreviewCount(response.data.count || 0);
+            setShowPreview(true);
+            
+            if (response.data.count === 0) {
+                showMessage('No customers found matching the criteria', 'info');
+            } else {
+                showMessage(`✅ Found ${response.data.count} customers`, 'success');
+            }
+        } catch (error) {
+            console.error('❌ Error previewing:', error);
+            showMessage('Failed to preview customers: ' + (error.response?.data?.error || error.message), 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ===== SEND MANUAL =====
+    const handleSendManual = async () => {
+        const combinedMessage = getCombinedMessage();
+        
+        if (!combinedMessage) {
+            showMessage('Please compose a message first!', 'error');
+            return;
+        }
+
+        if (previewCount === 0) {
+            showMessage('Please preview customers first!', 'error');
+            return;
+        }
+
+        const member = teamMembers.find(m => m.name === selectedMember);
+        if (!member) {
+            showMessage('Please select a valid member', 'error');
+            return;
+        }
+
+        if (!testMode && !member.isConnected) {
+            showMessage(`⚠️ ${member.name} is not connected to WhatsApp!`, 'error');
+            return;
+        }
+
+        const parts = [];
+        if (selectedTemplate) parts.push('Template');
+        if (customMessage.trim()) parts.push('Custom');
+        if (selectedPreset) parts.push('Preset');
+        
+        if (!window.confirm(`Send combined message (${parts.join(' + ')}) to ${previewCount} customers?`)) return;
+
+        setLoading(true);
+        try {
+            let response;
+            
+            if (testMode) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                response = { data: { sent: previewCount, failed: 0 } };
+                showMessage(`🧪 TEST MODE: ${previewCount} messages would be sent!`, 'success');
+            } else {
+                const payload = {
+                    target_group: targetGroup,
+                    interests: selectedInterests,
+                    yatra: selectedYatra,
+                    message: combinedMessage,
+                    team_member: member.name,
+                    attachment: attachmentBase64 || null,
+                    attachment_name: attachmentName || null,
+                    message_parts: parts.join(' + ')
+                };
+                
+                response = await api.post('/api/broadcast/send', payload);
+                showMessage(`✅ ${response.data.sent || previewCount} messages sent by ${member.name}! (${parts.join(' + ')})`, 'success');
+            }
+            
+            loadMessageLogs();
+            
+            if (!testMode) {
+                const sentCount = response.data.sent || previewCount;
+                setTeamMembers(prev => prev.map(m => 
+                    m.name === member.name 
+                        ? { ...m, todaySent: m.todaySent + sentCount }
+                        : m
+                ));
+            }
+            
+            setPreviewCount(0);
+            setPreviewCustomers([]);
+            setShowPreview(false);
+            
+            if (attachmentBase64) {
+                removeAttachment();
+            }
+        } catch (error) {
+            console.error('Error sending broadcast:', error);
+            showMessage('Failed to send broadcast: ' + (error.response?.data?.error || error.message), 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ===== AUTO SEND =====
+    const handleAutoSend = async () => {
+        const combinedMessage = getCombinedMessage();
+        
+        if (!combinedMessage) {
+            showMessage('Please compose a message first!', 'error');
+            return;
+        }
+
+        if (previewCount === 0) {
+            showMessage('Please preview customers first!', 'error');
+            return;
+        }
+
+        const connectedMembers = teamMembers.filter(m => m.isConnected && m.todaySent < m.dailyLimit);
+        if (!testMode && connectedMembers.length === 0) {
+            showMessage('No connected members available to send messages!', 'error');
+            return;
+        }
+
+        if (!window.confirm(`Auto-send to ${previewCount} customers?`)) return;
+
+        setLoading(true);
+        try {
+            let response;
+            
+            if (testMode) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                response = { data: { sent: previewCount, failed: 0 } };
+                showMessage(`🧪 TEST MODE: ${previewCount} messages would be sent!`, 'success');
+            } else {
+                const payload = {
+                    target_group: targetGroup,
+                    interests: selectedInterests,
+                    yatra: selectedYatra,
+                    message: combinedMessage
+                };
+                
+                response = await api.post('/api/broadcast/auto-send', payload);
+                showMessage(`✅ ${response.data.sent || previewCount} messages sent!`, 'success');
+            }
+            
+            loadMessageLogs();
+            
+            setPreviewCount(0);
+            setPreviewCustomers([]);
+            setShowPreview(false);
+        } catch (error) {
+            console.error('Error auto-sending:', error);
+            showMessage('Failed to auto-send', 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ===== AUTO BROADCAST (Batch Mode) =====
+    const handleAutoBroadcast = async () => {
+        const combinedMessage = getCombinedMessage();
+        
+        if (!combinedMessage) {
+            showMessage('Please compose a message first!', 'error');
+            return;
+        }
+
+        if (previewCount === 0) {
+            showMessage('Please preview customers first!', 'error');
+            return;
+        }
+
+        const member = teamMembers.find(m => m.name === selectedMember);
+        if (!member) {
+            showMessage('Please select a valid member', 'error');
+            return;
+        }
+
+        if (!testMode && !member.isConnected) {
+            showMessage(`⚠️ ${member.name} is not connected to WhatsApp!`, 'error');
+            return;
+        }
+
+        const memberStat = memberStats.find(s => s.memberName === selectedMember);
+        if (!testMode && memberStat && memberStat.remaining <= 0) {
+            showMessage(`⚠️ ${selectedMember} has reached daily limit!`, 'error');
+            return;
+        }
+
+        const customersToSend = Math.min(previewCount, testMode ? previewCount : (memberStat?.remaining || 250));
+        
+        if (!window.confirm(
+            `Start auto-broadcast for ${selectedMember}?\n\n` +
+            `📊 Customers: ${customersToSend}\n` +
+            `📦 Batch Size: 15 messages\n` +
+            `⏰ Pause: 30 minutes between batches\n` +
+            (testMode ? '🧪 TEST MODE - No actual messages will be sent' : `📈 Daily Limit: ${memberStat?.remaining || 250} remaining today`)
+        )) return;
+
+        setLoading(true);
+        try {
+            let response;
+            
+            if (testMode) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                response = { data: { success: true, totalCustomers: customersToSend, totalBatches: Math.ceil(customersToSend / 15), estimatedHours: Math.ceil((Math.ceil(customersToSend / 15) * 30) / 60) } };
+            } else {
+                const payload = {
+                    memberId: member.id,
+                    memberName: member.name,
+                    filters: {
+                        target_group: targetGroup,
+                        target_interest: selectedInterests[0] || '',
+                        target_yatra: selectedYatra || ''
+                    },
+                    message: combinedMessage
+                };
+
+                response = await api.post('/api/auto-broadcast/start', payload);
+            }
+            
+            if (response.data.success) {
+                setBroadcastId(response.data.broadcastId || 'test_' + Date.now());
+                setAutoStatus({
+                    status: 'running',
+                    totalCustomers: response.data.totalCustomers || customersToSend,
+                    totalBatches: response.data.totalBatches || Math.ceil(customersToSend / 15),
+                    batchSize: 15,
+                    pauseMinutes: 30,
+                    estimatedHours: response.data.estimatedHours || Math.ceil((Math.ceil(customersToSend / 15) * 30) / 60)
+                });
+                setAutoMode(true);
+                showMessage(`✅ Auto-broadcast started! ${response.data.totalCustomers || customersToSend} customers, ${response.data.totalBatches || Math.ceil(customersToSend / 15)} batches`, 'success');
+                
+                if (!testMode) {
+                    const interval = setInterval(async () => {
+                        try {
+                            const statusRes = await api.get(`/api/auto-broadcast/status/${response.data.broadcastId}`);
+                            setAutoStatus(statusRes.data);
+                            if (statusRes.data.status === 'completed') {
+                                clearInterval(interval);
+                                setAutoMode(false);
+                                showMessage(`✅ Auto-broadcast complete! ${statusRes.data.sentCount} messages sent`, 'success');
+                            }
+                        } catch (err) {
+                            console.error('Error polling status:', err);
+                        }
+                    }, 10000);
+                } else {
+                    setTimeout(() => {
+                        setAutoStatus(prev => ({ ...prev, status: 'completed', sentCount: customersToSend }));
+                        setAutoMode(false);
+                        showMessage(`✅ TEST MODE: Auto-broadcast complete! ${customersToSend} messages would be sent`, 'success');
+                    }, 3000);
+                }
+            } else {
+                showMessage('Failed to start: ' + response.data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Error starting auto-broadcast:', error);
+            showMessage('Failed to start auto-broadcast', 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleStopAuto = async () => {
+        if (!broadcastId) return;
+        if (!window.confirm('Stop the auto-broadcast?')) return;
+        
+        try {
+            if (!testMode) {
+                await api.post(`/api/auto-broadcast/stop/${broadcastId}`);
+            }
+            showMessage('🛑 Auto-broadcast stopped', 'info');
+            setAutoMode(false);
+            setAutoStatus(null);
+            setBroadcastId(null);
+            loadMemberStats();
+        } catch (error) {
+            console.error('Error stopping auto-broadcast:', error);
+            showMessage('Failed to stop auto-broadcast', 'error');
+        }
+    };
+
+    const showMessage = (text, type = "success") => {
+        setMessage({ text, type });
+        setTimeout(() => setMessage({ text: "", type: "" }), 5000);
+    };
+
+    const formatDate = (dateString) => {
+        if (!dateString) return '';
+        return new Date(dateString).toLocaleString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    };
+
+    // ===== EXPORT LOGS =====
+    const exportLogs = () => {
+        if (messageLogs.length === 0) {
+            showMessage('No logs to export', 'error');
+            return;
+        }
+
+        const headers = ['#', 'Member', 'Recipient', 'Message', 'Status', 'Date', 'Parts'];
+        const rows = messageLogs.map((log, index) => [
+            index + 1,
+            log.team_member || 'Unknown',
+            log.recipient || 'N/A',
+            log.message || 'N/A',
+            log.status || 'Sent',
+            new Date(log.created_at).toLocaleString(),
+            log.message_parts || 'Single'
+        ]);
+
+        let csv = headers.join(',') + '\n';
+        rows.forEach(row => {
+            csv += row.join(',') + '\n';
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `broadcast_logs_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        showMessage('📥 Logs exported successfully!', 'success');
+    };
+
+    // ===== RENDER =====
+    return (
+        <div className="p-6 max-w-7xl mx-auto">
+            {/* Test Mode Banner */}
+            {testMode && (
+                <div className="mb-4 p-3 bg-yellow-100 border border-yellow-400 rounded-lg text-yellow-800 text-center">
+                    🧪 <strong>TEST MODE</strong> - No actual messages will be sent.
+                    <button 
+                        onClick={() => setTestMode(false)}
+                        className="ml-3 px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-white rounded text-xs"
+                    >
+                        Switch to Live Mode
+                    </button>
+                </div>
+            )}
+
+            {/* Message */}
+            {message.text && (
+                <div className={`p-4 rounded-xl mb-4 ${
+                    message.type === 'error' ? 'bg-red-100 text-red-700 border border-red-200' :
+                    message.type === 'info' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                    'bg-green-100 text-green-700 border border-green-200'
+                }`}>
+                    {message.text}
+                </div>
+            )}
+
+            {/* Stats Dashboard */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
+                    <p className="text-xs text-gray-500 uppercase">Connected Members</p>
+                    <p className="text-2xl font-bold">{stats.connectedMembers}/4</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-500">
+                    <p className="text-xs text-gray-500 uppercase">Total Messages</p>
+                    <p className="text-2xl font-bold text-green-600">{stats.totalMessages}</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-yellow-500">
+                    <p className="text-xs text-gray-500 uppercase">Today Sent</p>
+                    <p className="text-2xl font-bold text-yellow-600">{stats.todaySent}</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-red-500">
+                    <p className="text-xs text-gray-500 uppercase">Daily Limit</p>
+                    <p className="text-2xl font-bold text-red-600">{stats.dailyLimit}</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-purple-500">
+                    <p className="text-xs text-gray-500 uppercase">Auto Broadcast</p>
+                    <p className="text-2xl font-bold text-purple-600">
+                        {autoMode ? '🟢 Running' : '⚪ Idle'}
+                    </p>
+                </div>
+            </div>
+
+            {/* Team Members - QR Code Login */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                {teamMembers.map((member) => {
+                    const stat = memberStats.find(s => s.memberName === member.name);
+                    return (
+                        <div 
+                            key={member.id} 
+                            className={`bg-white rounded-lg shadow p-4 border-2 ${member.name === selectedMember ? 'border-blue-500' : 'border-gray-200'}`}
+                            onClick={() => {
+                                setSelectedMember(member.name);
+                                setMemberTodaySent(member.todaySent);
+                            }}
+                            style={{ cursor: 'pointer' }}
+                        >
+                            <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                        <p className="text-sm font-medium text-gray-800">{member.name}</p>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleEditMember(member);
+                                            }}
+                                            className="text-xs text-blue-500 hover:text-blue-700"
+                                        >
+                                            ✏️
+                                        </button>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        <span className={`text-xs px-2 py-0.5 rounded-full ${member.isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                            {member.isConnected ? '🟢 Online' : '🔴 Offline'}
+                                        </span>
+                                        {member.whatsappNumber && (
+                                            <span className="text-xs text-gray-400">📱 {member.whatsappNumber}</span>
+                                        )}
+                                    </div>
+                                </div>
+                                <span className={`px-2 py-0.5 rounded-full text-xs ${member.todaySent >= member.dailyLimit ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                    {stat?.remaining || member.dailyLimit}/{member.dailyLimit}
+                                </span>
+                            </div>
+                            <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                                <div 
+                                    className={`h-1.5 rounded-full ${member.todaySent >= member.dailyLimit ? 'bg-red-500' : 'bg-blue-500'}`}
+                                    style={{ width: `${Math.min((member.todaySent / member.dailyLimit) * 100, 100)}%` }}
+                                ></div>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1">
+                                {member.dailyLimit - member.todaySent} remaining
+                            </p>
+                            
+                            {/* QR Code Display */}
+                            {qrCodes[member.name] && !member.isConnected && (
+                                <div className="mt-3 p-2 bg-gray-50 rounded-lg text-center">
+                                    <img 
+                                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrCodes[member.name])}`}
+                                        alt={`${member.name} QR`} 
+                                        className="mx-auto w-32 h-32 border border-gray-200 rounded-lg"
+                                        onError={(e) => {
+                                            console.error('QR image failed to load for', member.name);
+                                            e.target.style.display = 'none';
+                                        }}
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Scan with WhatsApp to connect {member.name}</p>
+                                    <p className="text-xs text-blue-500 mt-1">Open WhatsApp → Settings → Linked Devices</p>
+                                </div>
+                            )}
+                            
+                            {/* Connect/Logout Buttons */}
+                            <div className="mt-3 flex gap-2">
+                                {!member.isConnected && !qrCodes[member.name] && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleLoginMember(member.name);
+                                        }}
+                                        className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs transition flex-1"
+                                    >
+                                        🔌 Connect
+                                    </button>
+                                )}
+                                {!member.isConnected && qrCodes[member.name] && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleLoginMember(member.name);
+                                        }}
+                                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-xs transition flex-1"
+                                    >
+                                        🔄 Refresh QR
+                                    </button>
+                                )}
+                                {member.isConnected && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleLogoutMember(member.name);
+                                        }}
+                                        className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-xs transition flex-1"
+                                    >
+                                        🚪 Logout
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* Assign Number Modal */}
+            {showAssignModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg max-w-md w-full p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">📞 Assign WhatsApp Number</h3>
+                            <button
+                                onClick={() => setShowAssignModal(false)}
+                                className="text-gray-500 hover:text-gray-700 text-xl"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Select Member</label>
+                                <select
+                                    value={assignMember}
+                                    onChange={(e) => setAssignMember(e.target.value)}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                >
+                                    {teamMembers.map((m) => (
+                                        <option key={m.id} value={m.name}>{m.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">WhatsApp Number</label>
+                                <input
+                                    type="text"
+                                    value={assignPhone}
+                                    onChange={(e) => setAssignPhone(e.target.value)}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="e.g., 919311310550"
+                                />
+                                <p className="text-xs text-gray-400 mt-1">Enter with country code (e.g., 919311310550)</p>
+                            </div>
+                        </div>
+                        <div className="mt-6 flex gap-3">
+                            <button
+                                onClick={handleAssignNumber}
+                                disabled={assignLoading}
+                                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                            >
+                                {assignLoading ? '⏳ Assigning...' : '💾 Assign Number'}
+                            </button>
+                            <button
+                                onClick={() => setShowAssignModal(false)}
+                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Broadcast Form */}
+            <div className="bg-white rounded-lg shadow p-6 mb-6 border border-gray-200">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-bold text-gray-800">📤 Send Broadcast</h2>
+                    <button
+                        onClick={() => setShowAssignModal(true)}
+                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm transition"
+                    >
+                        📞 Assign Number
+                    </button>
+                </div>
+                
+                {/* Member Selector */}
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Select Team Member</label>
+                    <select
+                        value={selectedMember}
+                        onChange={(e) => {
+                            setSelectedMember(e.target.value);
+                            const member = teamMembers.find(m => m.name === e.target.value);
+                            if (member) {
+                                setMemberTodaySent(member.todaySent);
+                            }
+                        }}
+                        className="w-full md:w-1/2 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                        {teamMembers.map((member) => (
+                            <option key={member.id} value={member.name}>
+                                {member.name} ({member.isConnected ? '🟢 Connected' : '🔴 Offline'} | {member.dailyLimit - member.todaySent} remaining)
+                            </option>
+                        ))}
+                    </select>
+                    {!teamMembers.find(m => m.name === selectedMember)?.isConnected && !testMode && (
+                        <p className="text-xs text-red-500 mt-1">⚠️ Selected member is not connected</p>
+                    )}
+                </div>
+                
+                {/* Automation Rules */}
+                <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="flex items-center gap-4">
+                        <input
+                            type="checkbox"
+                            checked={useRule}
+                            onChange={(e) => {
+                                setUseRule(e.target.checked);
+                                if (!e.target.checked) {
+                                    setSelectedRule('');
+                                    setTargetGroup('Daily Reach');
+                                    setSelectedInterests([]);
+                                    setSelectedYatra('');
+                                    setSelectedTemplate('');
+                                    setCustomMessage('');
+                                }
+                            }}
+                            className="w-4 h-4 text-blue-600"
+                        />
+                        <label className="text-sm font-medium text-gray-700">Use Automation Rule</label>
+                        <select
+                            value={selectedRule}
+                            onChange={(e) => {
+                                setSelectedRule(e.target.value);
+                                if (e.target.value) applyRule(e.target.value);
+                            }}
+                            disabled={!useRule}
+                            className="flex-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                        >
+                            <option value="">Select a rule...</option>
+                            {automationRules.filter(r => r.status === 'Active').map((rule) => (
+                                <option key={rule.id} value={rule.id}>
+                                    {rule.rule_name} ({rule.target_group || 'All'})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {!useRule && (
+                    <div className="grid md:grid-cols-3 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Target Group</label>
+                            <select
+                                value={targetGroup}
+                                onChange={(e) => setTargetGroup(e.target.value)}
+                                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="Daily Reach">Daily Reach</option>
+                                <option value="Do Not Reach">Do Not Reach</option>
+                                <option value="Unsubscribed">Unsubscribed</option>
+                                <option value="All">All Customers</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Interest Filter</label>
+                            <select
+                                value={selectedInterests[0] || ''}
+                                onChange={(e) => setSelectedInterests(e.target.value ? [e.target.value] : [])}
+                                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="">All Interests</option>
+                                {interests.map((interest) => (
+                                    <option key={interest.id} value={interest.interest_name}>
+                                        {interest.interest_name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Yatra Filter</label>
+                            <select
+                                value={selectedYatra}
+                                onChange={(e) => setSelectedYatra(e.target.value)}
+                                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="">All Yatras</option>
+                                {yatras.map((yatra) => (
+                                    <option key={yatra.id} value={yatra.yatra_name}>
+                                        {yatra.yatra_name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                )}
+
+                {/* Message Section */}
+                <div className="mt-4">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                        <p className="text-sm text-blue-700 font-medium">💡 Compose Your Message</p>
+                        <p className="text-xs text-blue-600">Select a preset, template, or type your own message.</p>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-4">
+                        <div className={`border rounded-lg p-3 ${selectedPreset ? 'border-purple-500 bg-purple-50' : 'border-gray-200'}`}>
+                            <label className="text-sm font-medium text-gray-700">📋 Preset</label>
+                            <select
+                                value={selectedPreset}
+                                onChange={(e) => setSelectedPreset(e.target.value)}
+                                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm mt-1"
+                            >
+                                <option value="">Select a preset...</option>
+                                {presetMessages.map((preset) => (
+                                    <option key={preset.id} value={String(preset.id)}>
+                                        {preset.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className={`border rounded-lg p-3 ${selectedTemplate ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+                            <label className="text-sm font-medium text-gray-700">📌 Template</label>
+                            <select
+                                value={selectedTemplate}
+                                onChange={(e) => setSelectedTemplate(e.target.value)}
+                                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm mt-1"
+                            >
+                                <option value="">Select a template...</option>
+                                {templates.map((template) => (
+                                    <option key={template.id} value={template.id}>
+                                        {template.template_name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className={`border rounded-lg p-3 ${customMessage.trim() ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
+                            <label className="text-sm font-medium text-gray-700">✏️ Custom Message</label>
+                            <textarea
+                                value={customMessage}
+                                onChange={(e) => setCustomMessage(e.target.value)}
+                                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 text-sm mt-1"
+                                rows="3"
+                                placeholder="Type your message..."
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Combined Message Preview */}
+                {getCombinedMessage() && (
+                    <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200">
+                        <p className="text-xs font-medium text-gray-700 mb-1">📝 Combined Message:</p>
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{getCombinedMessage()}</p>
+                    </div>
+                )}
+
+                {/* PDF Attachment */}
+                <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">📎 Attach PDF</label>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <input
+                            id="fileInput"
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            onChange={handleAttachmentUpload}
+                            className="hidden"
+                        />
+                        <button
+                            onClick={() => document.getElementById('fileInput').click()}
+                            className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg transition text-sm"
+                        >
+                            Choose PDF
+                        </button>
+                        {attachmentName && (
+                            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-1">
+                                <span className="text-sm text-green-700">📎 {attachmentName}</span>
+                                <button
+                                    onClick={removeAttachment}
+                                    className="text-red-500 hover:text-red-700 text-sm"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        )}
+                        <span className="text-xs text-gray-400">Max size: 10MB, PDF only</span>
+                    </div>
+                </div>
+
+                {/* Buttons */}
+                <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                        onClick={handlePreview}
+                        disabled={loading}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                    >
+                        {loading ? '⏳ Loading...' : '🔍 Preview'}
+                    </button>
+                    <button
+                        onClick={handleSendManual}
+                        disabled={loading || previewCount === 0 || (!testMode && !teamMembers.find(m => m.name === selectedMember)?.isConnected)}
+                        className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                    >
+                        {loading ? '⏳ Sending...' : `📤 Manual Send (${previewCount})`}
+                    </button>
+                    <button
+                        onClick={handleAutoSend}
+                        disabled={loading || previewCount === 0 || (!testMode && !teamMembers.some(m => m.isConnected))}
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                    >
+                        🤖 Auto-Send to All Members
+                    </button>
+                    <button
+                        onClick={handleAutoBroadcast}
+                        disabled={loading || previewCount === 0 || autoMode || (!testMode && !teamMembers.find(m => m.name === selectedMember)?.isConnected)}
+                        className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                    >
+                        {autoMode ? '⏳ Running...' : `📦 Auto Batch (${selectedMember})`}
+                    </button>
+                    {autoMode && (
+                        <button
+                            onClick={handleStopAuto}
+                            className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg transition"
+                        >
+                            🛑 Stop
+                        </button>
+                    )}
+                    {!teamMembers.some(m => m.isConnected) && !testMode && (
+                        <span className="text-sm text-red-500 self-center">⚠️ No members connected</span>
+                    )}
+                    {teamMembers.find(m => m.name === selectedMember)?.isConnected && previewCount > 0 && !testMode && (
+                        <span className="text-sm text-green-500 self-center">✅ {selectedMember} connected - {previewCount} customers ready</span>
+                    )}
+                    {testMode && previewCount > 0 && (
+                        <span className="text-sm text-yellow-500 self-center">🧪 Test Mode - {previewCount} customers ready</span>
+                    )}
+                </div>
+
+                {/* Auto Broadcast Status */}
+                {autoMode && autoStatus && (
+                    <div className="mt-4 p-4 bg-orange-50 rounded-lg border border-orange-200">
+                        <h4 className="font-semibold text-orange-800 mb-2">📦 Auto Broadcast Status</h4>
+                        <div className="grid grid-cols-4 gap-4 text-sm">
+                            <div>
+                                <span className="text-gray-500">Status:</span>
+                                <span className="ml-2 font-medium text-green-600">● Running</span>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Progress:</span>
+                                <span className="ml-2 font-medium">
+                                    {autoStatus.currentBatch || 0}/{autoStatus.totalBatches} batches
+                                </span>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Sent:</span>
+                                <span className="ml-2 font-medium">{autoStatus.sentCount || 0}/{autoStatus.totalCustomers}</span>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Next Batch:</span>
+                                <span className="ml-2 font-medium">In {autoStatus.pauseMinutes || 30} min</span>
+                            </div>
+                        </div>
+                        <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                                className="h-2 rounded-full bg-orange-600 transition-all"
+                                style={{ 
+                                    width: `${((autoStatus.sentCount || 0) / (autoStatus.totalCustomers || 1)) * 100}%` 
+                                }}
+                            ></div>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">
+                            Estimated completion: ~{autoStatus.estimatedHours || 0} hours
+                        </p>
+                    </div>
+                )}
+            </div>
+
+            {/* Preview */}
+            {showPreview && (
+                <div className="bg-gray-50 rounded-lg shadow p-4 mb-6 border border-gray-200">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-gray-800">📊 Preview ({previewCount} customers)</h3>
+                        <div className="flex gap-2">
+                            <span className="text-sm text-gray-500">
+                                {selectedMember}: {memberTodaySent}/{teamMembers.find(m => m.name === selectedMember)?.dailyLimit || 250}
+                            </span>
+                            <button
+                                onClick={() => setShowPreview(false)}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                    {previewCustomers.length === 0 ? (
+                        <p className="text-gray-500 text-center py-4">No customers match the criteria</p>
+                    ) : (
+                        <div className="max-h-60 overflow-y-auto">
+                            <table className="w-full text-sm">
+                                <thead className="bg-gray-100 sticky top-0">
+                                    <tr>
+                                        <th className="px-3 py-1 text-left">#</th>
+                                        <th className="px-3 py-1 text-left">Name</th>
+                                        <th className="px-3 py-1 text-left">Phone</th>
+                                        <th className="px-3 py-1 text-left">Group</th>
+                                        <th className="px-3 py-1 text-left">Interest</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200">
+                                    {previewCustomers.slice(0, 20).map((customer, index) => (
+                                        <tr key={customer.id || index}>
+                                            <td className="px-3 py-1">{index + 1}</td>
+                                            <td className="px-3 py-1">{customer.customer_name || 'Unknown'}</td>
+                                            <td className="px-3 py-1">{customer.mobile_number}</td>
+                                            <td className="px-3 py-1">
+                                                <span className={`px-2 py-0.5 rounded-full text-xs ${customer.group_type === 'Daily Reach' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                    {customer.group_type || 'Daily Reach'}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-1 text-xs truncate max-w-xs">{customer.interests || 'None'}</td>
+                                        </tr>
+                                    ))}
+                                    {previewCustomers.length > 20 && (
+                                        <tr>
+                                            <td colSpan="5" className="px-3 py-2 text-center text-gray-500">
+                                                ... and {previewCustomers.length - 20} more
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Preset Modal */}
+            {showPresetModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg max-w-lg w-full p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">
+                                {editingPreset ? '✏️ Edit Preset' : '➕ New Preset'}
+                            </h3>
+                            <button
+                                onClick={() => {
+                                    setShowPresetModal(false);
+                                    setEditingPreset(null);
+                                    setPresetFormData({ name: '', message: '' });
+                                }}
+                                className="text-gray-500 hover:text-gray-700 text-xl"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <form onSubmit={editingPreset ? handleUpdatePreset : handleCreatePreset}>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                                    <input
+                                        type="text"
+                                        value={presetFormData.name}
+                                        onChange={(e) => setPresetFormData({ ...presetFormData, name: e.target.value })}
+                                        className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        placeholder="e.g., Yatra Offer"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Message</label>
+                                    <textarea
+                                        value={presetFormData.message}
+                                        onChange={(e) => setPresetFormData({ ...presetFormData, message: e.target.value })}
+                                        className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        rows="4"
+                                        placeholder="Enter preset message..."
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            <div className="mt-6 flex gap-3">
+                                <button
+                                    type="submit"
+                                    disabled={presetLoading}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                                >
+                                    {presetLoading ? 'Saving...' : editingPreset ? 'Update Preset' : 'Create Preset'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowPresetModal(false);
+                                        setEditingPreset(null);
+                                        setPresetFormData({ name: '', message: '' });
+                                    }}
+                                    className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Member Modal */}
+            {showEditMember && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg max-w-md w-full p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">✏️ Edit Member Name</h3>
+                            <button
+                                onClick={() => {
+                                    setShowEditMember(false);
+                                    setEditingMember(null);
+                                    setEditMemberName('');
+                                    setEditMemberId(null);
+                                }}
+                                className="text-gray-500 hover:text-gray-700 text-xl"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Member Name</label>
+                                <input
+                                    type="text"
+                                    value={editMemberName}
+                                    onChange={(e) => setEditMemberName(e.target.value)}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Enter member name..."
+                                />
+                            </div>
+                        </div>
+                        <div className="mt-6 flex gap-3">
+                            <button
+                                onClick={handleSaveMemberName}
+                                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition"
+                            >
+                                💾 Save
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowEditMember(false);
+                                    setEditingMember(null);
+                                    setEditMemberName('');
+                                    setEditMemberId(null);
+                                }}
+                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Recent Broadcasts */}
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+                <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+                    <h2 className="font-bold text-gray-800">📜 Recent Broadcasts</h2>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={exportLogs}
+                            className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm transition"
+                        >
+                            📥 Export
+                        </button>
+                        <button
+                            onClick={() => {
+                                loadMessageLogs();
+                            }}
+                            className="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm transition"
+                        >
+                            🔄 Refresh
+                        </button>
+                    </div>
+                </div>
+                {messageLogs.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">
+                        No broadcast logs yet
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table className="w-full">
+                            <thead className="bg-gray-50 sticky top-0">
+                                <tr>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">#</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Member</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Recipient</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Message</th>
+                                    <th className="px-4 py-2 text-center text-sm font-medium text-gray-600">Status</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Date</th>
+                                    <th className="px-4 py-2 text-center text-sm font-medium text-gray-600">Parts</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                                {messageLogs.slice(0, 50).map((log, index) => (
+                                    <tr key={log.id || index} className="hover:bg-gray-50">
+                                        <td className="px-4 py-2 text-sm text-gray-500">{index + 1}</td>
+                                        <td className="px-4 py-2 text-sm font-medium text-gray-800">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs ${
+                                                log.team_member === 'Deepanshu' ? 'bg-purple-100 text-purple-700' :
+                                                log.team_member === 'Sanjeev' ? 'bg-blue-100 text-blue-700' :
+                                                log.team_member === 'Rajeev' ? 'bg-green-100 text-green-700' :
+                                                log.team_member === 'Muskan' ? 'bg-pink-100 text-pink-700' :
+                                                'bg-gray-100 text-gray-700'
+                                            }`}>
+                                                {log.team_member || 'Unknown'}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-gray-600">{log.recipient || 'N/A'}</td>
+                                        <td className="px-4 py-2 text-sm text-gray-600 max-w-xs truncate">{log.message || 'N/A'}</td>
+                                        <td className="px-4 py-2 text-center">
+                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${log.status === 'Sent' ? 'bg-green-100 text-green-700' : log.status === 'Failed' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                                {log.status || 'Sent'}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-gray-500">{formatDate(log.created_at)}</td>
+                                        <td className="px-4 py-2 text-center">
+                                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                                                {log.message_parts || 'Single'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
         </div>
-
-        <div className="mt-5">
-          <label className="block mb-2">Select Template</label>
-          <select
-            value={selectedTemplate}
-            onChange={(e) => setSelectedTemplate(e.target.value)}
-            className="w-full border p-3 rounded-xl"
-          >
-            <option value="">Select Template</option>
-            {templates
-              .filter((template) => template.interest_name === selectedInterest)
-              .map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.template_name}
-                </option>
-              ))}
-          </select>
-        </div>
-
-        <div className="flex gap-4 mt-6">
-          <button
-            onClick={handlePreview}
-            disabled={loading}
-            className="bg-yellow-400 hover:bg-yellow-500 px-6 py-3 rounded-xl font-semibold disabled:opacity-50"
-          >
-            {loading ? "Loading..." : "Preview Customers"}
-          </button>
-          <button className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-xl font-semibold">
-            Send Campaign
-          </button>
-        </div>
-      </div>
-
-      {customers.length > 0 && (
-        <div className="bg-white rounded-2xl shadow border overflow-hidden">
-          <div className="p-4 border-b">
-            <h2 className="font-bold">Customers Found: {customers.length}</h2>
-          </div>
-          <table className="w-full">
-            <thead>
-              <tr className="bg-black text-yellow-400">
-                <th className="p-3 text-left">Customer</th>
-                <th className="p-3 text-left">Mobile</th>
-                <th className="p-3 text-left">Interest</th>
-              </tr>
-            </thead>
-            <tbody>
-              {customers.map((customer) => (
-                <tr key={customer.id} className="border-b">
-                  <td className="p-3">{customer.customer_name}</td>
-                  <td className="p-3">{customer.mobile_number}</td>
-                  <td className="p-3">{customer.interests}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
+    );
+};
 
 export default BroadcastPage;

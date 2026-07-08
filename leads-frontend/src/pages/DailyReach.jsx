@@ -5,7 +5,7 @@ function DailyReach() {
     <CustomerGroupPage
       title="Daily Reach Customers"
       description="Customers who receive daily messages"
-      groupType="daily-reach"
+      groupType="Daily Reach"
       color="green"
       moveToGroup="Do Not Reach"
       moveToLabel="Move to Do Not Reach"

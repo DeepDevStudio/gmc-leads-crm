@@ -1,10 +1,25 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback } from 'react';
+import api from '../services/api';
 
 const YatraBookingPage = () => {
+    // ===== DARK MODE =====
+    const [isDarkMode, setIsDarkMode] = useState(() => {
+        const saved = localStorage.getItem('darkMode');
+        return saved ? JSON.parse(saved) : false;
+    });
+
+    useEffect(() => {
+        if (isDarkMode) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    }, [isDarkMode]);
+
     const [yatras, setYatras] = useState([]);
     const [trips, setTrips] = useState([]);
     const [selectedTrip, setSelectedTrip] = useState(null);
+    const [selectedTripId, setSelectedTripId] = useState(null);
     const [loading, setLoading] = useState(false);
     const [showAddCustomer, setShowAddCustomer] = useState(false);
     const [customers, setCustomers] = useState([]);
@@ -20,6 +35,12 @@ const YatraBookingPage = () => {
     const [pickupPoints, setPickupPoints] = useState([]);
     const [searchTrip, setSearchTrip] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
+    const [dateRange, setDateRange] = useState({ start: '', end: '' });
+    const [showCustomerHistory, setShowCustomerHistory] = useState(null);
+    const [showSeatMap, setShowSeatMap] = useState(false);
+    const [showPrintView, setShowPrintView] = useState(false);
+    const [loadingTrip, setLoadingTrip] = useState(false);
+    const [loadingCustomers, setLoadingCustomers] = useState(false);
 
     // Form data for new trip
     const [tripFormData, setTripFormData] = useState({
@@ -28,6 +49,7 @@ const YatraBookingPage = () => {
         start_date: '',
         end_date: '',
         total_seats: '',
+        status: 'active'
     });
     const [showTripForm, setShowTripForm] = useState(false);
     const [editingTrip, setEditingTrip] = useState(null);
@@ -62,6 +84,15 @@ const YatraBookingPage = () => {
     const [editExtraExpensesList, setEditExtraExpensesList] = useState([]);
     const [editNewExpenseName, setEditNewExpenseName] = useState('');
     const [editNewExpenseAmount, setEditNewExpenseAmount] = useState('');
+
+    // Stats
+    const [stats, setStats] = useState({
+        totalTrips: 0,
+        totalBookings: 0,
+        totalRevenue: 0,
+        activeTrips: 0,
+        completedTrips: 0
+    });
 
     // Pickup points based on yatra name
     const pickupPointsMap = {
@@ -136,28 +167,58 @@ const YatraBookingPage = () => {
         loadPickupPoints();
     }, []);
 
+    // Calculate stats whenever trips change
+    useEffect(() => {
+        calculateStats();
+    }, [trips]);
+
+    const calculateStats = () => {
+        const totalTrips = trips.length;
+        const activeTrips = trips.filter(t => t.status === 'active').length;
+        const completedTrips = trips.filter(t => t.status === 'completed').length;
+        const totalRevenue = trips.reduce((sum, trip) => {
+            return sum + (trip.customers?.reduce((s, c) => s + (parseFloat(c.total_amount) || 0), 0) || 0);
+        }, 0);
+        const totalBookings = trips.reduce((sum, trip) => sum + (trip.customers?.length || 0), 0);
+
+        setStats({
+            totalTrips,
+            totalBookings,
+            totalRevenue,
+            activeTrips,
+            completedTrips
+        });
+    };
+
     const loadData = async () => {
+        setLoading(true);
         try {
             const [yatrasRes, tripsRes, customersRes] = await Promise.all([
-                axios.get('/api/yatras'),
-                axios.get('/api/yatra-bookings/trips'),
-                axios.get('/api/customers')
+                api.get('/yatras'),
+                api.get('/yatra-bookings/trips'),
+                api.get('/customers')
             ]);
-            setYatras(yatrasRes.data || []);
-            setTrips(tripsRes.data || []);
-            setCustomers(customersRes.data || []);
+            setYatras(Array.isArray(yatrasRes.data) ? yatrasRes.data : []);
+            setTrips(Array.isArray(tripsRes.data) ? tripsRes.data : []);
+            setCustomers(Array.isArray(customersRes.data) ? customersRes.data : []);
         } catch (error) {
             console.error('Error loading data:', error);
             showMessage('Failed to load data', 'error');
+            setYatras([]);
+            setTrips([]);
+            setCustomers([]);
+        } finally {
+            setLoading(false);
         }
     };
 
     const loadPickupPoints = async () => {
         try {
-            const response = await axios.get('/api/yatra-bookings/pickup-points');
-            setPickupPoints(response.data || []);
+            const response = await api.get('/yatra-bookings/pickup-points');
+            setPickupPoints(Array.isArray(response.data) ? response.data : []);
         } catch (error) {
             console.error('Error loading pickup points:', error);
+            setPickupPoints([]);
         }
     };
 
@@ -190,7 +251,7 @@ const YatraBookingPage = () => {
         setTripFormData({ ...tripFormData, [name]: value });
 
         if (name === 'yatra_id') {
-            const selectedYatra = yatras.find(y => y.id === parseInt(value));
+            const selectedYatra = Array.isArray(yatras) ? yatras.find(y => y.id === parseInt(value)) : null;
             if (selectedYatra) {
                 const startDate = selectedYatra.start_date ? new Date(selectedYatra.start_date).toISOString().split('T')[0] : '';
                 const endDate = selectedYatra.end_date ? new Date(selectedYatra.end_date).toISOString().split('T')[0] : '';
@@ -201,18 +262,20 @@ const YatraBookingPage = () => {
                     ...prev,
                     start_date: startDate,
                     end_date: endDate,
-                    trip_name: tripName
+                    trip_name: tripName,
+                    total_seats: selectedYatra.total_seats || 53
                 }));
             }
         }
     };
 
+    // ===== CREATE TRIP =====
     const handleCreateTrip = async (e) => {
         e.preventDefault();
         setLoading(true);
 
         try {
-            await axios.post('/api/yatra-bookings/trips', tripFormData);
+            await api.post('/yatra-bookings/trips', tripFormData);
             showMessage('Trip created successfully!', 'success');
             setTripFormData({
                 yatra_id: '',
@@ -220,6 +283,7 @@ const YatraBookingPage = () => {
                 start_date: '',
                 end_date: '',
                 total_seats: '',
+                status: 'active'
             });
             setShowTripForm(false);
             loadData();
@@ -231,6 +295,7 @@ const YatraBookingPage = () => {
         }
     };
 
+    // ===== EDIT TRIP =====
     const handleEditTrip = (trip) => {
         setEditingTrip(trip);
         setTripFormData({
@@ -239,6 +304,7 @@ const YatraBookingPage = () => {
             start_date: trip.start_date ? new Date(trip.start_date).toISOString().split('T')[0] : '',
             end_date: trip.end_date ? new Date(trip.end_date).toISOString().split('T')[0] : '',
             total_seats: trip.total_seats,
+            status: trip.status || 'active'
         });
         setShowEditTripForm(true);
     };
@@ -248,7 +314,7 @@ const YatraBookingPage = () => {
         setLoading(true);
 
         try {
-            await axios.put(`/api/yatra-bookings/trips/${editingTrip.id}`, tripFormData);
+            await api.put(`/yatra-bookings/trips/${editingTrip.id}`, tripFormData);
             showMessage('Trip updated successfully!', 'success');
             setShowEditTripForm(false);
             setEditingTrip(null);
@@ -258,6 +324,7 @@ const YatraBookingPage = () => {
                 start_date: '',
                 end_date: '',
                 total_seats: '',
+                status: 'active'
             });
             loadData();
         } catch (error) {
@@ -268,14 +335,16 @@ const YatraBookingPage = () => {
         }
     };
 
+    // ===== DELETE TRIP =====
     const handleDeleteTrip = async (id, name) => {
         if (!window.confirm(`Delete trip "${name}"? This will remove all customers and travelers.`)) return;
 
         try {
-            await axios.delete(`/api/yatra-bookings/trips/${id}`);
+            await api.delete(`/yatra-bookings/trips/${id}`);
             showMessage('Trip deleted successfully!', 'success');
-            if (selectedTrip?.id === id) {
+            if (selectedTripId === id) {
                 setSelectedTrip(null);
+                setSelectedTripId(null);
             }
             loadData();
         } catch (error) {
@@ -284,26 +353,88 @@ const YatraBookingPage = () => {
         }
     };
 
-    const handleSelectTrip = async (tripId) => {
+    // ===== UPDATE TRIP STATUS =====
+    const handleUpdateTripStatus = async (tripId, status) => {
         try {
-            const response = await axios.get(`/api/yatra-bookings/trips/${tripId}`);
-            setSelectedTrip(response.data);
-            setShowAddCustomer(false);
-            setSelectedSeats([]);
-            setExtraExpensesList([]);
-            setEditExtraExpensesList([]);
+            const trip = trips.find(t => t.id === tripId);
+            if (!trip) return;
+
+            await api.put(`/yatra-bookings/trips/${tripId}`, {
+                ...trip,
+                status: status
+            });
+            showMessage(`Trip status updated to ${status}!`, 'success');
+            loadData();
+            if (selectedTripId === tripId) {
+                setSelectedTrip({ ...selectedTrip, status });
+            }
         } catch (error) {
-            console.error('Error loading trip:', error);
-            showMessage('Failed to load trip details', 'error');
+            console.error('Error updating trip status:', error);
+            showMessage('Failed to update trip status', 'error');
         }
     };
 
+    // ===== SELECT TRIP (FIXED) =====
+    const handleSelectTrip = async (tripId) => {
+        // Reset all states before loading new trip
+        setSelectedTrip(null);
+        setShowAddCustomer(false);
+        setSelectedSeats([]);
+        setExtraExpensesList([]);
+        setEditExtraExpensesList([]);
+        setShowCustomerHistory(null);
+        setTravelers([]);
+        setShowSeatMap(false);
+        
+        setLoadingTrip(true);
+        
+        try {
+            const response = await api.get(`/yatra-bookings/trips/${tripId}`);
+            const tripData = response.data;
+            
+            // Set the trip data
+            setSelectedTrip(tripData);
+            setSelectedTripId(tripId);
+            
+            // Reset customer form
+            setCustomerFormData({
+                customer_id: '',
+                customer_name: '',
+                phone: '',
+                location: '',
+                pickup_point: '',
+                customer_age: '',
+                customer_gender: 'Male',
+                total_seats: 1,
+                base_amount: 0,
+                total_amount: 0,
+                advance_amount: '',
+                balance_amount: 0,
+                advance_collected_by: 'GMC',
+                advance_collected_date: '',
+                referral_id: '',
+                payment_mode: 'Cash',
+                remarks: '',
+                discount: '',
+                discount_given_by: 'GMC',
+            });
+            
+            console.log('Trip loaded:', tripData.trip_name, 'Customers:', tripData.customers?.length || 0);
+        } catch (error) {
+            console.error('Error loading trip:', error);
+            showMessage('Failed to load trip details: ' + (error.response?.data?.error || error.message), 'error');
+        } finally {
+            setLoadingTrip(false);
+        }
+    };
+
+    // ===== PHONE SEARCH =====
     const handlePhoneChange = (e) => {
         const phone = e.target.value;
         setSearchPhone(phone);
 
         if (phone.length === 10) {
-            const customer = customers.find(c => c.mobile_number === phone);
+            const customer = Array.isArray(customers) ? customers.find(c => c.mobile_number === phone) : null;
             if (customer) {
                 setFoundCustomer(customer);
                 setIsNewCustomer(false);
@@ -333,6 +464,7 @@ const YatraBookingPage = () => {
         setCustomerFormData({ ...customerFormData, [name]: value });
     };
 
+    // ===== TRAVELER FUNCTIONS =====
     const addTraveler = () => {
         setTravelers([...travelers, { traveler_name: '', phone: '', age: '', gender: 'Male', relation: 'Friend' }]);
         setSelectedSeats([]);
@@ -370,7 +502,7 @@ const YatraBookingPage = () => {
         setTravelers(newTravelers);
     };
 
-    // Extra Expenses Functions
+    // ===== EXTRA EXPENSES =====
     const addExtraExpense = () => {
         if (!newExpenseName.trim() || !newExpenseAmount || parseFloat(newExpenseAmount) <= 0) {
             showMessage('Please enter expense name and amount', 'error');
@@ -419,6 +551,7 @@ const YatraBookingPage = () => {
         return 1 + travelers.length;
     };
 
+    // ===== SEAT SELECTION =====
     const toggleSeat = (seatNumber) => {
         const totalSeats = getTotalSeats();
         if (selectedSeats.includes(seatNumber)) {
@@ -442,7 +575,7 @@ const YatraBookingPage = () => {
     const renderSeats = (seats, isEditMode = false, editingCustomerId = null) => {
         if (!seats || seats.length === 0) {
             return (
-                <div className="text-center text-gray-500 py-8">
+                <div className={`text-center py-8 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                     No seats available
                 </div>
             );
@@ -461,26 +594,26 @@ const YatraBookingPage = () => {
                 <div className="flex justify-center gap-6 mb-4 text-sm">
                     <div className="flex items-center gap-2">
                         <div className="w-4 h-4 rounded bg-green-500 border border-green-600"></div>
-                        <span className="text-gray-600">Available</span>
+                        <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Available</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <div className="w-4 h-4 rounded bg-yellow-400 border border-yellow-600"></div>
-                        <span className="text-gray-600">Selected</span>
+                        <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Selected</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <div className="w-4 h-4 rounded bg-red-400 border border-red-600"></div>
-                        <span className="text-gray-600">Booked</span>
+                        <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Booked</span>
                     </div>
                 </div>
 
-                <div className="bg-gray-100 rounded-2xl p-4 border-2 border-gray-300">
+                <div className={`${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-gray-100 border-gray-300'} rounded-2xl p-4 border-2`}>
                     <div className="flex justify-between items-center mb-4">
-                        <div className="bg-gray-700 text-white px-6 py-2 rounded-lg text-sm font-medium">
+                        <div className={`${isDarkMode ? 'bg-slate-600' : 'bg-gray-700'} text-white px-6 py-2 rounded-lg text-sm font-medium`}>
                             🚗 DRIVER
                         </div>
                         {hasOddLastRow && (
                             <div className="flex items-center gap-2">
-                                <span className="text-xs text-gray-500 mr-1">Last Seat:</span>
+                                <span className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} mr-1`}>Last Seat:</span>
                                 {lastRow.map((seat) => {
                                     const isBooked = isEditMode 
                                         ? seat.is_booked === 1 && seat.customer_trip_id !== editingCustomerId
@@ -576,7 +709,7 @@ const YatraBookingPage = () => {
                                         })}
                                     </div>
 
-                                    <div className="w-4 h-12 bg-gray-200 rounded border border-gray-300"></div>
+                                    <div className={`w-4 h-12 ${isDarkMode ? 'bg-slate-600' : 'bg-gray-200'} rounded border ${isDarkMode ? 'border-slate-500' : 'border-gray-300'}`}></div>
 
                                     <div className="flex gap-2">
                                         {rightSeats.map((seat) => {
@@ -618,7 +751,7 @@ const YatraBookingPage = () => {
                                         })}
                                     </div>
 
-                                    <div className="text-xs text-gray-400 w-8 text-center">
+                                    <div className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-400'} w-8 text-center`}>
                                         Row {rowIndex + 1}
                                     </div>
                                 </div>
@@ -629,17 +762,17 @@ const YatraBookingPage = () => {
 
                 <div className="text-center mt-4">
                     {selectedSeats.length === 0 && (
-                        <p className="text-sm text-gray-500">
+                        <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                             💡 Click on available seats to select them
                         </p>
                     )}
                     {selectedSeats.length > 0 && selectedSeats.length < getTotalSeats() && (
-                        <p className="text-sm text-yellow-600 font-medium">
+                        <p className={`text-sm ${isDarkMode ? 'text-yellow-400' : 'text-yellow-600'} font-medium`}>
                             ⚠️ Selected {selectedSeats.length} of {getTotalSeats()} seats needed
                         </p>
                     )}
                     {selectedSeats.length === getTotalSeats() && (
-                        <p className="text-sm text-green-600 font-medium">
+                        <p className={`text-sm ${isDarkMode ? 'text-green-400' : 'text-green-600'} font-medium`}>
                             ✅ All {getTotalSeats()} seats selected! Seats: {selectedSeats.join(', ')}
                         </p>
                     )}
@@ -648,7 +781,150 @@ const YatraBookingPage = () => {
         );
     };
 
-    // ===== HANDLE ADD CUSTOMER =====
+    // ===== SEND WHATSAPP =====
+    const sendWhatsApp = async (customer) => {
+        if (!customer.phone || customer.phone.length !== 10) {
+            showMessage('Please enter a valid 10-digit phone number', 'error');
+            return;
+        }
+
+        const message = `🙏 *GetMeYatra Booking Confirmation* 🙏
+
+Hi *${customer.customer_name || 'Customer'}*,
+
+Your booking has been confirmed for *${selectedTrip?.trip_name || 'Yatra Trip'}*!
+
+📅 Dates: ${formatDate(selectedTrip?.start_date)} - ${formatDate(selectedTrip?.end_date)}
+🪑 Seats: ${customer.seat_numbers?.join(', ') || 'Not assigned'}
+💺 Total Seats: ${customer.total_seats}
+💰 Total Amount: ₹${parseFloat(customer.total_amount || 0).toFixed(2)}
+💵 Advance Paid: ₹${parseFloat(customer.advance_amount || 0).toFixed(2)}
+💰 Balance: ₹${parseFloat(customer.balance_amount || 0).toFixed(2)}
+
+📍 Pickup Point: ${customer.pickup_point || 'TBD'}
+
+*Thank you for choosing GetMeYatra!* 🚀
+For queries, contact: +919999999999`;
+
+        try {
+            const response = await api.post('/whatsapp/send-message', {
+                phone: customer.phone,
+                message: message,
+                customer_id: customer.id,
+                trip_id: selectedTrip?.id
+            });
+
+            if (response.data.success) {
+                showMessage(`WhatsApp message sent to ${customer.customer_name}!`, 'success');
+            } else {
+                showMessage('Failed to send WhatsApp message', 'error');
+            }
+        } catch (error) {
+            console.error('Error sending WhatsApp:', error);
+            showMessage('Failed to send WhatsApp message', 'error');
+        }
+    };
+
+    // ===== GENERATE PAYMENT RECEIPT =====
+    const generateReceipt = (customer) => {
+        const receiptHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Receipt - ${customer.customer_name}</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+        .header h1 { color: #1a56db; margin: 0; }
+        .header p { color: #666; margin: 5px 0; }
+        .receipt-details { margin: 20px 0; }
+        .receipt-details table { width: 100%; border-collapse: collapse; }
+        .receipt-details td { padding: 8px; border-bottom: 1px solid #eee; }
+        .receipt-details .label { font-weight: bold; color: #555; }
+        .total-row { font-weight: bold; font-size: 1.1em; border-top: 2px solid #333; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 0.9em; border-top: 1px solid #ddd; padding-top: 15px; }
+        .status-paid { color: green; font-weight: bold; }
+        .status-pending { color: orange; font-weight: bold; }
+        @media print { .no-print { display: none; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏔️ GetMeYatra</h1>
+        <p>Payment Receipt</p>
+        <p><strong>Receipt #:</strong> ${customer.id}-${Date.now()}</p>
+        <p><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN')}</p>
+    </div>
+
+    <div class="receipt-details">
+        <h3>Customer Details</h3>
+        <table>
+            <tr><td class="label">Name</td><td>${customer.customer_name}</td></tr>
+            <tr><td class="label">Phone</td><td>${customer.phone}</td></tr>
+            <tr><td class="label">Location</td><td>${customer.location || 'N/A'}</td></tr>
+            <tr><td class="label">Pickup Point</td><td>${customer.pickup_point || 'N/A'}</td></tr>
+        </table>
+    </div>
+
+    <div class="receipt-details">
+        <h3>Trip Details</h3>
+        <table>
+            <tr><td class="label">Trip Name</td><td>${selectedTrip?.trip_name}</td></tr>
+            <tr><td class="label">Dates</td><td>${formatDate(selectedTrip?.start_date)} - ${formatDate(selectedTrip?.end_date)}</td></tr>
+            <tr><td class="label">Total Seats</td><td>${customer.total_seats}</td></tr>
+            <tr><td class="label">Seat Numbers</td><td>${customer.seat_numbers?.join(', ') || 'N/A'}</td></tr>
+        </table>
+    </div>
+
+    <div class="receipt-details">
+        <h3>Payment Summary</h3>
+        <table>
+            <tr><td class="label">Total Amount</td><td>₹${parseFloat(customer.total_amount || 0).toFixed(2)}</td></tr>
+            <tr><td class="label">Advance Paid</td><td>₹${parseFloat(customer.advance_amount || 0).toFixed(2)}</td></tr>
+            <tr><td class="label">Discount</td><td>₹${parseFloat(customer.discount || 0).toFixed(2)}</td></tr>
+            <tr class="total-row"><td>Balance Due</td><td>₹${parseFloat(customer.balance_amount || 0).toFixed(2)}</td></tr>
+        </table>
+    </div>
+
+    <div style="text-align: center; margin: 20px 0;">
+        <span class="${parseFloat(customer.balance_amount || 0) <= 0 ? 'status-paid' : 'status-pending'}">
+            ${parseFloat(customer.balance_amount || 0) <= 0 ? '✅ FULLY PAID' : '⚠️ PENDING PAYMENT'}
+        </span>
+    </div>
+
+    <div class="footer">
+        <p>Thank you for choosing GetMeYatra!</p>
+        <p>For queries, contact: +919999999999</p>
+        <p style="font-size: 0.8em; color: #999;">This is a system generated receipt.</p>
+    </div>
+</body>
+</html>
+        `;
+
+        const win = window.open('', '_blank', 'width=800,height=600');
+        if (win) {
+            win.document.write(receiptHTML);
+            win.document.close();
+            win.print();
+            showMessage('Receipt generated successfully!', 'success');
+        } else {
+            showMessage('Please allow popups to generate receipt', 'error');
+        }
+    };
+
+    // ===== VIEW CUSTOMER HISTORY =====
+    const viewCustomerHistory = async (customerId) => {
+        try {
+            const response = await api.get(`/yatra-bookings/customer-history/${customerId}`);
+            setShowCustomerHistory(Array.isArray(response.data) ? response.data : []);
+        } catch (error) {
+            console.error('Error fetching customer history:', error);
+            showMessage('Failed to load customer history', 'error');
+            setShowCustomerHistory([]);
+        }
+    };
+
+    // ===== ADD CUSTOMER TO TRIP =====
     const handleAddCustomer = async (e) => {
         e.preventDefault();
         setLoading(true);
@@ -662,10 +938,30 @@ const YatraBookingPage = () => {
             const discountAmount = parseFloat(customerFormData.discount) || 0;
             const balanceAmount = totalAmount + totalExtraExpenses - advanceAmount - discountAmount;
 
+            if (!customerFormData.customer_name.trim()) {
+                showMessage('Please enter customer name', 'error');
+                setLoading(false);
+                return;
+            }
+
+            if (!customerFormData.phone || customerFormData.phone.length !== 10) {
+                showMessage('Please enter a valid 10-digit phone number', 'error');
+                setLoading(false);
+                return;
+            }
+
             if (selectedSeats.length !== totalSeats) {
                 showMessage(`Please select exactly ${totalSeats} seats`, 'error');
                 setLoading(false);
                 return;
+            }
+
+            for (const traveler of travelers) {
+                if (!traveler.traveler_name.trim()) {
+                    showMessage('Please enter name for all travelers', 'error');
+                    setLoading(false);
+                    return;
+                }
             }
 
             const allTravelers = [
@@ -681,15 +977,15 @@ const YatraBookingPage = () => {
 
             let customerId = customerFormData.customer_id;
             if (isNewCustomer && !customerId) {
-                const customerRes = await axios.post('/api/customers', {
+                const customerRes = await api.post('/customers', {
                     customer_name: customerFormData.customer_name || 'Unknown',
                     mobile_number: customerFormData.phone,
                     interests: '',
                     location_type: customerFormData.location || 'Delhi NCR'
                 });
                 customerId = customerRes.data.id;
-                const customersRes = await axios.get('/api/customers');
-                setCustomers(customersRes.data || []);
+                const customersRes = await api.get('/customers');
+                setCustomers(Array.isArray(customersRes.data) ? customersRes.data : []);
             }
 
             const seatsToSend = selectedSeats.map(Number);
@@ -712,14 +1008,17 @@ const YatraBookingPage = () => {
                 payment_mode: customerFormData.payment_mode || 'Cash',
                 remarks: customerFormData.remarks,
                 travelers: allTravelers,
-                extra_expenses: extraExpensesList,
+                extra_expenses: extraExpensesList.map(e => ({
+                    expense_name: e.name,
+                    expense_amount: e.amount
+                })),
                 discount: discountAmount,
                 discount_given_by: customerFormData.discount_given_by || 'GMC',
             };
 
-            await axios.post(`/api/yatra-bookings/trips/${selectedTrip.id}/customers`, payload);
+            await api.post(`/yatra-bookings/trips/${selectedTrip.id}/customers`, payload);
             
-            // Refresh trip data to show seat numbers
+            // Refresh the trip data to show the new customer
             await handleSelectTrip(selectedTrip.id);
 
             showMessage(`Customer added successfully! Seats: ${selectedSeats.join(', ')}`, 'success');
@@ -761,12 +1060,19 @@ const YatraBookingPage = () => {
         }
     };
 
-    // ===== HANDLE EDIT CUSTOMER =====
+    // ===== EDIT CUSTOMER =====
     const handleEditCustomer = (customer) => {
         const selfTraveler = customer.travelers?.find(t => t.relation === 'Self') || {};
         const otherTravelers = customer.travelers?.filter(t => t.relation !== 'Self') || [];
 
-        const currentSeats = customer.seat_numbers || [];
+        let currentSeats = [];
+        if (customer.seat_numbers) {
+            if (Array.isArray(customer.seat_numbers)) {
+                currentSeats = customer.seat_numbers;
+            } else if (typeof customer.seat_numbers === 'string') {
+                currentSeats = customer.seat_numbers.split(',').map(s => parseInt(s.trim()));
+            }
+        }
 
         setEditingCustomer(customer);
         setCustomerFormData({
@@ -802,7 +1108,7 @@ const YatraBookingPage = () => {
         setShowEditCustomerForm(true);
     };
 
-    // ===== HANDLE UPDATE CUSTOMER =====
+    // ===== UPDATE CUSTOMER =====
     const handleUpdateCustomer = async (e) => {
         e.preventDefault();
         setLoading(true);
@@ -815,6 +1121,18 @@ const YatraBookingPage = () => {
             const totalExtraExpenses = getEditTotalExtraExpenses();
             const discountAmount = parseFloat(customerFormData.discount) || 0;
             const balanceAmount = totalAmount + totalExtraExpenses - advanceAmount - discountAmount;
+
+            if (!customerFormData.customer_name.trim()) {
+                showMessage('Please enter customer name', 'error');
+                setLoading(false);
+                return;
+            }
+
+            if (!customerFormData.phone || customerFormData.phone.length !== 10) {
+                showMessage('Please enter a valid 10-digit phone number', 'error');
+                setLoading(false);
+                return;
+            }
 
             if (selectedSeats.length !== totalSeats) {
                 showMessage(`Please select exactly ${totalSeats} seats`, 'error');
@@ -853,16 +1171,16 @@ const YatraBookingPage = () => {
                 remarks: customerFormData.remarks,
                 travelers: allTravelers,
                 extra_expenses: editExtraExpensesList.map(e => ({
-                    name: e.name,
-                    amount: e.amount
+                    expense_name: e.name,
+                    expense_amount: e.amount
                 })),
                 discount: discountAmount,
                 discount_given_by: customerFormData.discount_given_by || 'GMC',
             };
 
-            await axios.put(`/api/yatra-bookings/trips/${selectedTrip.id}/customers/${editingCustomer.id}`, payload);
+            await api.put(`/yatra-bookings/trips/${selectedTrip.id}/customers/${editingCustomer.id}`, payload);
             
-            // Refresh trip data to show seat numbers
+            // Refresh the trip data to show the updated customer
             await handleSelectTrip(selectedTrip.id);
 
             showMessage(`Customer updated successfully! Seats: ${selectedSeats.join(', ')}`, 'success');
@@ -883,9 +1201,10 @@ const YatraBookingPage = () => {
         if (!window.confirm('Remove this customer from the trip?')) return;
 
         try {
-            await axios.delete(`/api/yatra-bookings/trips/${selectedTrip.id}/customers/${customerTripId}`);
+            await api.delete(`/yatra-bookings/trips/${selectedTrip.id}/customers/${customerTripId}`);
             showMessage('Customer removed successfully!', 'success');
-            handleSelectTrip(selectedTrip.id);
+            // Refresh the trip data
+            await handleSelectTrip(selectedTrip.id);
         } catch (error) {
             console.error('Error removing customer:', error);
             showMessage('Failed to remove customer', 'error');
@@ -902,6 +1221,7 @@ const YatraBookingPage = () => {
 
     const pickupOptions = getPickupPoints();
 
+    // ===== EXPORT TRIP CUSTOMERS =====
     const exportTripCustomers = (trip) => {
         if (!trip.customers || trip.customers.length === 0) {
             showMessage('No customers to export', 'error');
@@ -936,44 +1256,98 @@ const YatraBookingPage = () => {
         showMessage(`Exported ${trip.customers.length} customers`, 'success');
     };
 
+    // ===== PRINT TRIP DETAILS =====
+    const printTripDetails = () => {
+        setShowPrintView(true);
+        setTimeout(() => {
+            window.print();
+            setShowPrintView(false);
+        }, 500);
+    };
+
+    // ===== DATE RANGE FILTER =====
+    const filteredTrips = Array.isArray(trips) ? trips.filter(trip => {
+        const matchesSearch = trip.trip_name?.toLowerCase().includes(searchTrip.toLowerCase()) ||
+                             trip.yatra_name?.toLowerCase().includes(searchTrip.toLowerCase());
+        const matchesStatus = filterStatus === 'All' || getTripStatus(trip) === filterStatus;
+        
+        let matchesDate = true;
+        if (dateRange.start && trip.start_date) {
+            const tripStart = new Date(trip.start_date);
+            const filterStart = new Date(dateRange.start);
+            if (tripStart < filterStart) matchesDate = false;
+        }
+        if (dateRange.end && trip.end_date) {
+            const tripEnd = new Date(trip.end_date);
+            const filterEnd = new Date(dateRange.end);
+            if (tripEnd > filterEnd) matchesDate = false;
+        }
+        
+        return matchesSearch && matchesStatus && matchesDate;
+    }) : [];
+
     return (
-        <div className="p-6 max-w-7xl mx-auto">
+        <div className={`p-6 max-w-7xl mx-auto ${isDarkMode ? 'dark' : ''}`}>
+            {/* Stats Dashboard */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-4 border-l-4 border-blue-500`}>
+                    <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} uppercase`}>Total Trips</p>
+                    <p className={`text-2xl font-bold ${isDarkMode ? 'text-white' : ''}`}>{stats.totalTrips}</p>
+                </div>
+                <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-4 border-l-4 border-green-500`}>
+                    <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} uppercase`}>Active Trips</p>
+                    <p className="text-2xl font-bold text-green-600 dark:text-green-400">{stats.activeTrips}</p>
+                </div>
+                <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-4 border-l-4 border-gray-500`}>
+                    <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} uppercase`}>Completed</p>
+                    <p className={`text-2xl font-bold ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{stats.completedTrips}</p>
+                </div>
+                <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-4 border-l-4 border-purple-500`}>
+                    <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} uppercase`}>Total Bookings</p>
+                    <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{stats.totalBookings}</p>
+                </div>
+                <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-4 border-l-4 border-yellow-500`}>
+                    <p className={`text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} uppercase`}>Revenue</p>
+                    <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">₹{stats.totalRevenue.toFixed(2)}</p>
+                </div>
+            </div>
+
             <div className="flex justify-between items-center mb-6">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-800">📋 Yatra Bookings</h1>
-                    <p className="text-gray-500">Manage yatra trips and add customers with travelers</p>
+                    <h1 className={`text-3xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>📋 Yatra Bookings</h1>
+                    <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Manage yatra trips and add customers with travelers</p>
                 </div>
                 <button
                     onClick={() => setShowTripForm(!showTripForm)}
-                    className="bg-yellow-400 hover:bg-yellow-500 px-4 py-2 rounded-lg font-semibold transition"
+                    className={`${isDarkMode ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-yellow-400 hover:bg-yellow-500'} px-4 py-2 rounded-lg font-semibold transition text-white`}
                 >
                     {showTripForm ? 'Cancel' : '+ New Trip'}
                 </button>
             </div>
 
             {message && (
-                <div className={`p-4 rounded-xl mb-4 ${message.type === 'error' ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-green-100 text-green-700 border border-green-200'}`}>
+                <div className={`p-4 rounded-xl mb-4 ${message.type === 'error' ? `bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-700` : `bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-700`}`}>
                     {message.text}
                 </div>
             )}
 
             {/* Create Trip Form */}
             {showTripForm && (
-                <div className="bg-white rounded-lg shadow-md p-6 mb-6 border border-gray-200">
-                    <h2 className="text-xl font-semibold mb-4">Create New Yatra Trip</h2>
+                <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow-md p-6 mb-6 border ${isDarkMode ? 'border-slate-700' : 'border-gray-200'}`}>
+                    <h2 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-white' : ''}`}>Create New Yatra Trip</h2>
                     <form onSubmit={handleCreateTrip}>
                         <div className="grid md:grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Select Yatra *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Select Yatra *</label>
                                 <select
                                     name="yatra_id"
                                     value={tripFormData.yatra_id}
                                     onChange={handleTripInputChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                     required
                                 >
                                     <option value="">Select Yatra</option>
-                                    {yatras
+                                    {Array.isArray(yatras) && yatras
                                         .sort((a, b) => new Date(a.start_date) - new Date(b.start_date))
                                         .map((yatra) => (
                                             <option key={yatra.id} value={yatra.id}>
@@ -983,64 +1357,77 @@ const YatraBookingPage = () => {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Trip Name *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Trip Name *</label>
                                 <input
                                     type="text"
                                     name="trip_name"
                                     value={tripFormData.trip_name}
                                     onChange={handleTripInputChange}
                                     placeholder="Trip Name"
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                     required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Start Date *</label>
                                 <input
                                     type="date"
                                     name="start_date"
                                     value={tripFormData.start_date}
                                     onChange={handleTripInputChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                     required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>End Date *</label>
                                 <input
                                     type="date"
                                     name="end_date"
                                     value={tripFormData.end_date}
                                     onChange={handleTripInputChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                     required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Total Seats *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Total Seats *</label>
                                 <input
                                     type="number"
                                     name="total_seats"
                                     value={tripFormData.total_seats}
                                     onChange={handleTripInputChange}
                                     placeholder="Total Seats"
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                     required
                                 />
+                            </div>
+                            <div>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Status</label>
+                                <select
+                                    name="status"
+                                    value={tripFormData.status}
+                                    onChange={handleTripInputChange}
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
+                                >
+                                    <option value="active">Active</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="cancelled">Cancelled</option>
+                                </select>
                             </div>
                         </div>
                         <div className="mt-4 flex gap-3">
                             <button
                                 type="submit"
                                 disabled={loading}
-                                className="bg-yellow-400 hover:bg-yellow-500 px-6 py-2 rounded-lg font-semibold transition disabled:opacity-50"
+                                className={`${isDarkMode ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-yellow-400 hover:bg-yellow-500'} px-6 py-2 rounded-lg font-semibold transition disabled:opacity-50 text-white`}
                             >
                                 {loading ? 'Creating...' : 'Create Trip'}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => setShowTripForm(false)}
-                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                                className={`px-6 py-2 rounded-lg transition ${isDarkMode ? 'bg-slate-600 hover:bg-slate-500 text-white' : 'bg-gray-300 hover:bg-gray-400'}`}
                             >
                                 Cancel
                             </button>
@@ -1051,60 +1438,73 @@ const YatraBookingPage = () => {
 
             {/* Edit Trip Form */}
             {showEditTripForm && editingTrip && (
-                <div className="bg-white rounded-lg shadow-md p-6 mb-6 border border-yellow-400">
-                    <h2 className="text-xl font-semibold mb-4">✏️ Edit Trip</h2>
+                <div className={`${isDarkMode ? 'bg-slate-800 border-yellow-600' : 'bg-white border-yellow-400'} rounded-lg shadow-md p-6 mb-6 border`}>
+                    <h2 className={`text-xl font-semibold mb-4 ${isDarkMode ? 'text-white' : ''}`}>✏️ Edit Trip</h2>
                     <form onSubmit={handleUpdateTrip}>
                         <div className="grid md:grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Trip Name *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Trip Name *</label>
                                 <input
                                     type="text"
                                     name="trip_name"
                                     value={tripFormData.trip_name}
                                     onChange={handleTripInputChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                     required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Start Date *</label>
                                 <input
                                     type="date"
                                     name="start_date"
                                     value={tripFormData.start_date}
                                     onChange={handleTripInputChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                     required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>End Date *</label>
                                 <input
                                     type="date"
                                     name="end_date"
                                     value={tripFormData.end_date}
                                     onChange={handleTripInputChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                     required
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Total Seats *</label>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Total Seats *</label>
                                 <input
                                     type="number"
                                     name="total_seats"
                                     value={tripFormData.total_seats}
                                     onChange={handleTripInputChange}
-                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400"
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                     required
                                 />
+                            </div>
+                            <div>
+                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Status</label>
+                                <select
+                                    name="status"
+                                    value={tripFormData.status}
+                                    onChange={handleTripInputChange}
+                                    className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
+                                >
+                                    <option value="active">Active</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="cancelled">Cancelled</option>
+                                </select>
                             </div>
                         </div>
                         <div className="mt-4 flex gap-3">
                             <button
                                 type="submit"
                                 disabled={loading}
-                                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold transition disabled:opacity-50"
+                                className={`bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold transition disabled:opacity-50`}
                             >
                                 {loading ? 'Updating...' : 'Update Trip'}
                             </button>
@@ -1114,7 +1514,7 @@ const YatraBookingPage = () => {
                                     setShowEditTripForm(false);
                                     setEditingTrip(null);
                                 }}
-                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                                className={`px-6 py-2 rounded-lg transition ${isDarkMode ? 'bg-slate-600 hover:bg-slate-500 text-white' : 'bg-gray-300 hover:bg-gray-400'}`}
                             >
                                 Cancel
                             </button>
@@ -1124,173 +1524,390 @@ const YatraBookingPage = () => {
             )}
 
             {/* Search and Filter */}
-            <div className="flex flex-wrap gap-3 mb-4">
-                <div className="flex-1 min-w-[200px] relative">
+            <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow p-4 mb-4 border ${isDarkMode ? 'border-slate-700' : 'border-gray-200'}`}>
+                <div className="flex flex-wrap gap-3">
+                    <div className="flex-1 min-w-[200px] relative">
+                        <input
+                            type="text"
+                            placeholder="🔍 Search trips..."
+                            value={searchTrip}
+                            onChange={(e) => setSearchTrip(e.target.value)}
+                            className={`w-full border p-2 rounded-xl text-sm focus:ring-2 focus:ring-yellow-400 outline-none ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
+                        />
+                    </div>
+                    <select
+                        value={filterStatus}
+                        onChange={(e) => setFilterStatus(e.target.value)}
+                        className={`border p-2 rounded-xl text-sm focus:ring-2 focus:ring-yellow-400 outline-none ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
+                    >
+                        <option value="All">All Trips</option>
+                        <option value="Empty">Empty</option>
+                        <option value="Partial">Partial</option>
+                        <option value="Full">Full</option>
+                    </select>
                     <input
-                        type="text"
-                        placeholder="🔍 Search trips..."
-                        value={searchTrip}
-                        onChange={(e) => setSearchTrip(e.target.value)}
-                        className="w-full border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-yellow-400 outline-none"
+                        type="date"
+                        value={dateRange.start}
+                        onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                        className={`border p-2 rounded-xl text-sm focus:ring-2 focus:ring-yellow-400 outline-none ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
+                        placeholder="Start Date"
                     />
+                    <input
+                        type="date"
+                        value={dateRange.end}
+                        onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                        className={`border p-2 rounded-xl text-sm focus:ring-2 focus:ring-yellow-400 outline-none ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
+                        placeholder="End Date"
+                    />
+                    {(dateRange.start || dateRange.end) && (
+                        <button
+                            onClick={() => setDateRange({ start: '', end: '' })}
+                            className="bg-red-500 text-white px-3 py-2 rounded-xl text-sm hover:bg-red-600 transition"
+                        >
+                            ✕ Clear
+                        </button>
+                    )}
                 </div>
-                <select
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                    className="border border-gray-300 p-2 rounded-xl text-sm focus:ring-2 focus:ring-yellow-400 outline-none"
-                >
-                    <option value="All">All Trips</option>
-                    <option value="Empty">Empty</option>
-                    <option value="Partial">Partial</option>
-                    <option value="Full">Full</option>
-                </select>
             </div>
 
             {/* Trips List */}
             <div className="grid md:grid-cols-3 gap-4 mb-6">
-                {trips
-                    .filter(trip => {
-                        if (searchTrip && !trip.trip_name?.toLowerCase().includes(searchTrip.toLowerCase())) {
-                            return false;
-                        }
-                        if (filterStatus !== 'All') {
-                            const status = getTripStatus(trip);
-                            if (status !== filterStatus) return false;
-                        }
-                        return true;
-                    })
-                    .map((trip) => {
-                        const status = getTripStatus(trip);
-                        const statusColors = {
-                            'Full': 'bg-red-100 text-red-700',
-                            'Partial': 'bg-yellow-100 text-yellow-700',
-                            'Empty': 'bg-green-100 text-green-700'
-                        };
-                        const tripRevenue = trip.customers?.reduce((sum, c) => sum + (parseFloat(c.total_amount) || 0), 0) || 0;
-                        
-                        return (
-                            <div
-                                key={trip.id}
-                                className={`bg-white rounded-xl shadow border p-4 hover:shadow-lg transition ${selectedTrip?.id === trip.id ? 'border-yellow-400 border-2' : ''}`}
-                            >
-                                <div onClick={() => handleSelectTrip(trip.id)} className="cursor-pointer">
-                                    <div className="flex justify-between items-start">
-                                        <h3 className="font-semibold text-gray-800 flex-1">{trip.trip_name}</h3>
-                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[status]}`}>
-                                            {status}
-                                        </span>
-                                    </div>
-                                    <p className="text-sm text-gray-500">{formatDate(trip.start_date)} - {formatDate(trip.end_date)}</p>
-                                    <div className="flex justify-between mt-2">
-                                        <span className="text-sm">Seats: <strong>{trip.booked_seats || 0}/{trip.total_seats}</strong></span>
-                                        <span className="text-sm">Customers: <strong>{trip.customers?.length || 0}</strong></span>
-                                    </div>
-                                    {tripRevenue > 0 && (
-                                        <div className="mt-1 text-sm text-green-600 font-medium">
-                                            Revenue: ₹{tripRevenue.toFixed(2)}
-                                        </div>
-                                    )}
+                {filteredTrips.map((trip) => {
+                    const status = getTripStatus(trip);
+                    const statusColors = {
+                        'Full': `bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400`,
+                        'Partial': `bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400`,
+                        'Empty': `bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400`
+                    };
+                    const tripRevenue = trip.customers?.reduce((sum, c) => sum + (parseFloat(c.total_amount) || 0), 0) || 0;
+                    
+                    // Check if this trip is currently selected
+                    const isSelected = selectedTripId === trip.id;
+                    
+                    return (
+                        <div
+                            key={trip.id}
+                            className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-xl shadow border p-4 hover:shadow-lg transition ${isSelected ? 'border-yellow-400 border-2' : isDarkMode ? 'border-slate-700' : 'border-gray-200'}`}
+                        >
+                            <div onClick={() => handleSelectTrip(trip.id)} className="cursor-pointer">
+                                <div className="flex justify-between items-start">
+                                    <h3 className={`font-semibold ${isDarkMode ? 'text-white' : 'text-gray-800'} flex-1`}>{trip.trip_name}</h3>
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusColors[status]}`}>
+                                        {status}
+                                    </span>
                                 </div>
-                                <div className="flex justify-end gap-2 mt-3 pt-2 border-t border-gray-100">
-                                    <button
-                                        onClick={() => handleEditTrip(trip)}
-                                        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-xs transition"
-                                    >
-                                        ✏️ Edit
-                                    </button>
-                                    <button
-                                        onClick={() => handleDeleteTrip(trip.id, trip.trip_name)}
-                                        className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-xs transition"
-                                    >
-                                        🗑️ Delete
-                                    </button>
-                                    {trip.customers?.length > 0 && (
-                                        <button
-                                            onClick={() => exportTripCustomers(trip)}
-                                            className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs transition"
-                                        >
-                                            📥 Export
-                                        </button>
+                                <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{formatDate(trip.start_date)} - {formatDate(trip.end_date)}</p>
+                                <div className={`flex justify-between mt-2 ${isDarkMode ? 'text-gray-300' : ''}`}>
+                                    <span className="text-sm">Seats: <strong>{trip.booked_seats || 0}/{trip.total_seats}</strong></span>
+                                    <span className="text-sm">Customers: <strong>{trip.customers?.length || 0}</strong></span>
+                                </div>
+                                <div className="mt-1 flex justify-between">
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${trip.status === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : trip.status === 'completed' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                                        {trip.status || 'Active'}
+                                    </span>
+                                    {tripRevenue > 0 && (
+                                        <span className="text-sm text-green-600 dark:text-green-400 font-medium">
+                                            ₹{tripRevenue.toFixed(2)}
+                                        </span>
                                     )}
                                 </div>
                             </div>
-                        );
-                    })}
-                {trips.length === 0 && (
-                    <div className="col-span-3 text-center text-gray-500 py-8">
-                        No trips created yet. Click "+ New Trip" to create one.
+                            <div className={`flex flex-wrap gap-1 mt-3 pt-2 border-t ${isDarkMode ? 'border-slate-700' : 'border-gray-100'}`}>
+                                <button
+                                    onClick={() => handleEditTrip(trip)}
+                                    className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs transition"
+                                >
+                                    ✏️ Edit
+                                </button>
+                                <button
+                                    onClick={() => handleDeleteTrip(trip.id, trip.trip_name)}
+                                    className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs transition"
+                                >
+                                    🗑️ Delete
+                                </button>
+                                {trip.customers?.length > 0 && (
+                                    <button
+                                        onClick={() => exportTripCustomers(trip)}
+                                        className="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs transition"
+                                    >
+                                        📥 Export
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => handleSelectTrip(trip.id)}
+                                    className="bg-purple-500 hover:bg-purple-600 text-white px-2 py-1 rounded text-xs transition"
+                                >
+                                    📋 View
+                                </button>
+                                {trip.status !== 'completed' && trip.status !== 'cancelled' && (
+                                    <button
+                                        onClick={() => handleUpdateTripStatus(trip.id, 'completed')}
+                                        className="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs transition"
+                                    >
+                                        ✅ Complete
+                                    </button>
+                                )}
+                                {trip.status === 'active' && (
+                                    <button
+                                        onClick={() => handleUpdateTripStatus(trip.id, 'cancelled')}
+                                        className="bg-red-400 hover:bg-red-500 text-white px-2 py-1 rounded text-xs transition"
+                                    >
+                                        ❌ Cancel
+                                    </button>
+                                )}
+                                {trip.status === 'cancelled' && (
+                                    <button
+                                        onClick={() => handleUpdateTripStatus(trip.id, 'active')}
+                                        className="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded text-xs transition"
+                                    >
+                                        🔄 Reactivate
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+                {filteredTrips.length === 0 && (
+                    <div className={`col-span-3 text-center ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} py-8`}>
+                        No trips found. Try adjusting your filters or create a new trip.
                     </div>
                 )}
             </div>
 
             {/* Selected Trip Details */}
             {selectedTrip && (
-                <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6">
-                    <div className="flex justify-between items-start mb-4">
+                <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg shadow-md border ${isDarkMode ? 'border-slate-700' : 'border-gray-200'} p-6`}>
+                    <div className="flex flex-wrap justify-between items-start gap-2 mb-4">
                         <div>
-                            <h2 className="text-2xl font-bold text-gray-800">{selectedTrip.trip_name}</h2>
-                            <p className="text-gray-500">
+                            <h2 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>{selectedTrip.trip_name}</h2>
+                            <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                                 {formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}
                                 {' • '}
                                 Seats: {selectedTrip.booked_seats || 0}/{selectedTrip.total_seats}
                                 {' • '}
                                 Rate: ₹{selectedTrip.rate_per_seat}/seat
                             </p>
+                            <p className={`text-sm ${isDarkMode ? 'text-gray-300' : ''}`}>
+                                Status: 
+                                <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-medium ${selectedTrip.status === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : selectedTrip.status === 'completed' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                                    {selectedTrip.status || 'Active'}
+                                </span>
+                            </p>
+                            <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                                👥 {selectedTrip.customers?.length || 0} customers booked
+                            </p>
                         </div>
-                        <button
-                            onClick={() => setShowAddCustomer(!showAddCustomer)}
-                            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition"
-                        >
-                            {showAddCustomer ? 'Cancel' : '+ Add Customer'}
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                onClick={printTripDetails}
+                                className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded-lg text-sm transition"
+                            >
+                                🖨️ Print
+                            </button>
+                            <button
+                                onClick={() => setShowSeatMap(!showSeatMap)}
+                                className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm transition"
+                            >
+                                {showSeatMap ? 'Hide Seat Map' : '🗺️ Seat Map'}
+                            </button>
+                            <button
+                                onClick={() => setShowAddCustomer(!showAddCustomer)}
+                                className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg transition text-sm"
+                            >
+                                {showAddCustomer ? 'Cancel' : '+ Add Customer'}
+                            </button>
+                        </div>
                     </div>
+
+                    {loadingTrip && (
+                        <div className="flex justify-center py-4">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                            <p className={`mt-2 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Loading trip details...</p>
+                        </div>
+                    )}
+
+                    {/* Seat Map View */}
+                    {showSeatMap && selectedTrip.seats && (
+                        <div className={`${isDarkMode ? 'bg-slate-700' : 'bg-gray-50'} rounded-lg p-4 mb-4 border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'}`}>
+                            <h3 className={`font-semibold mb-3 ${isDarkMode ? 'text-white' : ''}`}>🗺️ Seat Map - {selectedTrip.trip_name}</h3>
+                            <div className="overflow-x-auto">
+                                <div className="max-w-3xl mx-auto">
+                                    <div className="flex justify-center gap-6 mb-4 text-sm">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-4 h-4 rounded bg-green-400 border border-green-600"></div>
+                                            <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Available</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-4 h-4 rounded bg-red-400 border border-red-600"></div>
+                                            <span className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Booked</span>
+                                        </div>
+                                    </div>
+                                    <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} rounded-2xl p-4 border-2 ${isDarkMode ? 'border-slate-600' : 'border-gray-300'}`}>
+                                        <div className="bg-gray-700 text-white text-center py-2 rounded-lg mb-4 text-sm font-medium">
+                                            🚗 DRIVER
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-2 max-w-md mx-auto">
+                                            {selectedTrip.seats.map((seat) => {
+                                                const isBooked = seat.is_booked === 1;
+                                                const customerName = seat.customer_name || '';
+                                                return (
+                                                    <div
+                                                        key={seat.id || seat.seat_number}
+                                                        className={`p-2 rounded-lg text-center text-xs border-2 ${isBooked ? 'bg-red-100 border-red-400 dark:bg-red-900/30 dark:border-red-700' : 'bg-green-100 border-green-400 dark:bg-green-900/30 dark:border-green-700'}`}
+                                                        title={isBooked ? `Booked by: ${customerName}` : 'Available'}
+                                                    >
+                                                        <div className={`font-bold ${isDarkMode ? 'text-white' : ''}`}>{seat.seat_number}</div>
+                                                        {isBooked && (
+                                                            <div className={`text-[8px] ${isDarkMode ? 'text-gray-400' : 'text-gray-600'} truncate max-w-full`}>
+                                                                {customerName.split(' ')[0] || 'Booked'}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <div className={`text-center mt-3 text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                                        Total Seats: {selectedTrip.seats.length} | Booked: {selectedTrip.seats.filter(s => s.is_booked === 1).length} | Available: {selectedTrip.seats.filter(s => s.is_booked !== 1).length}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Customer History Modal */}
+                    {showCustomerHistory && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                            <div className={`${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white'} rounded-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6 border ${isDarkMode ? 'border-slate-700' : 'border-gray-200'}`}>
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : ''}`}>📋 Customer Booking History</h3>
+                                    <button
+                                        onClick={() => setShowCustomerHistory(null)}
+                                        className={`${isDarkMode ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-700'} text-xl`}
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                {showCustomerHistory.length === 0 ? (
+                                    <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-500'} text-center py-4`}>No booking history found</p>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {showCustomerHistory.map((booking, index) => (
+                                            <div key={index} className={`border ${isDarkMode ? 'border-slate-700' : 'border-gray-200'} rounded-lg p-3 hover:bg-gray-50 dark:hover:bg-slate-700`}>
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <p className={`font-semibold ${isDarkMode ? 'text-white' : ''}`}>{booking.trip_name}</p>
+                                                        <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>{formatDate(booking.start_date)} - {formatDate(booking.end_date)}</p>
+                                                        <p className={`text-sm ${isDarkMode ? 'text-gray-300' : ''}`}>Seats: {booking.total_seats} | Seat Numbers: {booking.seat_numbers?.join(', ') || 'N/A'}</p>
+                                                        <p className={`text-sm ${isDarkMode ? 'text-gray-300' : ''}`}>Total: ₹{booking.total_amount} | Paid: ₹{booking.advance_amount} | Balance: ₹{booking.balance_amount}</p>
+                                                    </div>
+                                                    <span className={`px-2 py-0.5 rounded text-xs ${booking.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'}`}>
+                                                        {booking.status || 'Active'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Print View */}
+                    {showPrintView && (
+                        <div className="hidden print:block">
+                            <div className="p-8">
+                                <h1 className="text-2xl font-bold text-center">{selectedTrip.trip_name}</h1>
+                                <p className="text-center text-gray-600">{formatDate(selectedTrip.start_date)} - {formatDate(selectedTrip.end_date)}</p>
+                                <hr className="my-4" />
+                                <table className="w-full border-collapse">
+                                    <thead>
+                                        <tr className="bg-gray-100">
+                                            <th className="border p-2 text-left">#</th>
+                                            <th className="border p-2 text-left">Customer</th>
+                                            <th className="border p-2 text-left">Phone</th>
+                                            <th className="border p-2 text-left">Seats</th>
+                                            <th className="border p-2 text-left">Seat Numbers</th>
+                                            <th className="border p-2 text-right">Total</th>
+                                            <th className="border p-2 text-right">Advance</th>
+                                            <th className="border p-2 text-right">Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {selectedTrip.customers?.map((customer, index) => (
+                                            <tr key={customer.id}>
+                                                <td className="border p-2">{index + 1}</td>
+                                                <td className="border p-2">{customer.customer_name}</td>
+                                                <td className="border p-2">{customer.phone}</td>
+                                                <td className="border p-2 text-center">{customer.total_seats}</td>
+                                                <td className="border p-2">{customer.seat_numbers?.join(', ') || '-'}</td>
+                                                <td className="border p-2 text-right">₹{parseFloat(customer.total_amount || 0).toFixed(2)}</td>
+                                                <td className="border p-2 text-right">₹{parseFloat(customer.advance_amount || 0).toFixed(2)}</td>
+                                                <td className="border p-2 text-right">₹{parseFloat(customer.balance_amount || 0).toFixed(2)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr className="font-bold bg-yellow-50">
+                                            <td colSpan="4" className="border p-2 text-right">TOTALS:</td>
+                                            <td className="border p-2 text-center">{selectedTrip.customers?.reduce((sum, c) => sum + (c.total_seats || 0), 0) || 0}</td>
+                                            <td className="border p-2 text-right">₹{selectedTrip.customers?.reduce((sum, c) => sum + (parseFloat(c.total_amount) || 0), 0).toFixed(2)}</td>
+                                            <td className="border p-2 text-right">₹{selectedTrip.customers?.reduce((sum, c) => sum + (parseFloat(c.advance_amount) || 0), 0).toFixed(2)}</td>
+                                            <td className="border p-2 text-right">₹{selectedTrip.customers?.reduce((sum, c) => sum + (parseFloat(c.balance_amount) || 0), 0).toFixed(2)}</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                                <p className="text-center text-gray-500 text-sm mt-4">Generated on: {new Date().toLocaleString()}</p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Edit Customer Form */}
                     {showEditCustomerForm && editingCustomer && (
-                        <div className="bg-yellow-50 rounded-lg p-4 mb-4 border border-yellow-300">
-                            <h3 className="font-semibold mb-3">✏️ Edit Customer</h3>
+                        <div className={`${isDarkMode ? 'bg-slate-700 border-yellow-500' : 'bg-yellow-50 border-yellow-300'} rounded-lg p-4 mb-4 border`}>
+                            <h3 className={`font-semibold mb-3 ${isDarkMode ? 'text-white' : ''}`}>✏️ Edit Customer</h3>
                             <form onSubmit={handleUpdateCustomer}>
                                 <div className="grid md:grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name *</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Customer Name *</label>
                                         <input
                                             type="text"
                                             name="customer_name"
                                             value={customerFormData.customer_name}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                             required
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Phone *</label>
                                         <input
                                             type="text"
                                             name="phone"
                                             value={customerFormData.phone}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                             required
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Location</label>
                                         <input
                                             type="text"
                                             name="location"
                                             value={customerFormData.location}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                             placeholder="Delhi, Gurgaon, etc."
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Pickup Point</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Pickup Point</label>
                                         <select
                                             name="pickup_point"
                                             value={customerFormData.pickup_point}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         >
                                             <option value="">Select Pickup Point</option>
                                             {pickupOptions.map((point, index) => (
@@ -1301,25 +1918,25 @@ const YatraBookingPage = () => {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Advance Amount</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Advance Amount</label>
                                         <input
                                             type="number"
                                             name="advance_amount"
                                             value={customerFormData.advance_amount}
                                             onChange={handleCustomerInputChange}
                                             placeholder="Enter advance amount"
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                             min="0"
                                             step="1"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Collected By</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Collected By</label>
                                         <select
                                             name="advance_collected_by"
                                             value={customerFormData.advance_collected_by}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         >
                                             <option value="Sanjeev">Sanjeev</option>
                                             <option value="Rajeev">Rajeev</option>
@@ -1327,46 +1944,46 @@ const YatraBookingPage = () => {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Advance Collected Date</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Advance Collected Date</label>
                                         <input
                                             type="date"
                                             name="advance_collected_date"
                                             value={customerFormData.advance_collected_date}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Referral ID</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Referral ID</label>
                                         <input
                                             type="text"
                                             name="referral_id"
                                             value={customerFormData.referral_id}
                                             onChange={handleCustomerInputChange}
                                             placeholder="Referral ID (optional)"
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Discount (₹)</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Discount (₹)</label>
                                         <input
                                             type="number"
                                             name="discount"
                                             value={customerFormData.discount}
                                             onChange={handleCustomerInputChange}
                                             placeholder="Enter discount amount"
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                             min="0"
                                             step="1"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Discount Given By</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Discount Given By</label>
                                         <select
                                             name="discount_given_by"
                                             value={customerFormData.discount_given_by}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         >
                                             <option value="GMC">GMC</option>
                                             <option value="Rajeev">Rajeev</option>
@@ -1374,32 +1991,32 @@ const YatraBookingPage = () => {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Remarks</label>
                                         <input
                                             type="text"
                                             name="remarks"
                                             value={customerFormData.remarks}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                             placeholder="Any special notes..."
                                         />
                                     </div>
                                     <div className="md:col-span-2">
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Extra Expenses</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Extra Expenses</label>
                                         <div className="flex gap-2 mb-2">
                                             <input
                                                 type="text"
                                                 placeholder="Expense name (e.g., Extra Bed)"
                                                 value={editNewExpenseName}
                                                 onChange={(e) => setEditNewExpenseName(e.target.value)}
-                                                className="flex-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                                className={`flex-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             />
                                             <input
                                                 type="number"
                                                 placeholder="Amount"
                                                 value={editNewExpenseAmount}
                                                 onChange={(e) => setEditNewExpenseAmount(e.target.value)}
-                                                className="w-32 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                                className={`w-32 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                                 min="0"
                                                 step="1"
                                             />
@@ -1412,10 +2029,10 @@ const YatraBookingPage = () => {
                                             </button>
                                         </div>
                                         {editExtraExpensesList.length > 0 && (
-                                            <div className="bg-white rounded-lg border p-2">
+                                            <div className={`${isDarkMode ? 'bg-slate-700' : 'bg-white'} rounded-lg border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} p-2`}>
                                                 {editExtraExpensesList.map((item, index) => (
-                                                    <div key={index} className="flex justify-between items-center border-b py-1 last:border-b-0">
-                                                        <span className="text-sm">{item.name}: ₹{item.amount}</span>
+                                                    <div key={index} className={`flex justify-between items-center border-b ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} py-1 last:border-b-0`}>
+                                                        <span className={`text-sm ${isDarkMode ? 'text-gray-300' : ''}`}>{item.name}: ₹{item.amount}</span>
                                                         <button
                                                             type="button"
                                                             onClick={() => removeEditExtraExpense(index)}
@@ -1425,7 +2042,7 @@ const YatraBookingPage = () => {
                                                         </button>
                                                     </div>
                                                 ))}
-                                                <div className="text-sm font-bold text-right mt-1 border-t pt-1">
+                                                <div className={`text-sm font-bold text-right mt-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} pt-1 ${isDarkMode ? 'text-white' : ''}`}>
                                                     Total Extra: ₹{getEditTotalExtraExpenses()}
                                                 </div>
                                             </div>
@@ -1434,8 +2051,8 @@ const YatraBookingPage = () => {
                                     <div className="md:col-span-2">
                                         <div className="flex justify-between items-center mb-2">
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700">Travelers</label>
-                                                <p className="text-xs text-gray-400">Total Seats: <strong>{1 + travelers.length}</strong> (1 Self + {travelers.length} additional)</p>
+                                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Travelers</label>
+                                                <p className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>Total Seats: <strong className={isDarkMode ? 'text-white' : ''}>{1 + travelers.length}</strong> (1 Self + {travelers.length} additional)</p>
                                             </div>
                                             <button
                                                 type="button"
@@ -1446,37 +2063,37 @@ const YatraBookingPage = () => {
                                             </button>
                                         </div>
 
-                                        <div className="bg-blue-50 rounded-lg p-3 border border-blue-200 mb-2">
+                                        <div className={`${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-blue-50 border-blue-200'} rounded-lg p-3 border mb-2`}>
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded">SELF</span>
-                                                <span className="text-sm font-medium text-gray-700">Customer: {customerFormData.customer_name || 'Not set'}</span>
+                                                <span className="text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 rounded">SELF</span>
+                                                <span className={`text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Customer: {customerFormData.customer_name || 'Not set'}</span>
                                             </div>
                                             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Name</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Name</label>
                                                     <input
                                                         type="text"
                                                         value={customerFormData.customer_name || ''}
-                                                        className="w-full p-1.5 border rounded text-sm bg-gray-50"
+                                                        className={`w-full p-1.5 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white' : 'bg-gray-50 border-gray-200'}`}
                                                         disabled
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Age</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Age</label>
                                                     <input
                                                         type="number"
                                                         placeholder="Age"
                                                         value={customerFormData.customer_age}
                                                         onChange={(e) => setCustomerFormData({ ...customerFormData, customer_age: e.target.value })}
-                                                        className="w-full p-1.5 border rounded text-sm"
+                                                        className={`w-full p-1.5 border rounded text-sm ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Gender</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Gender</label>
                                                     <select
                                                         value={customerFormData.customer_gender}
                                                         onChange={(e) => setCustomerFormData({ ...customerFormData, customer_gender: e.target.value })}
-                                                        className="w-full p-1.5 border rounded text-sm"
+                                                        className={`w-full p-1.5 border rounded text-sm ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                                     >
                                                         <option value="Male">Male</option>
                                                         <option value="Female">Female</option>
@@ -1487,44 +2104,44 @@ const YatraBookingPage = () => {
                                         </div>
 
                                         {travelers.map((traveler, index) => (
-                                            <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-2 p-2 bg-white rounded-lg border mb-2">
+                                            <div key={index} className={`grid grid-cols-1 md:grid-cols-5 gap-2 p-2 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} rounded-lg border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} mb-2`}>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Name *</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Name *</label>
                                                     <input
                                                         type="text"
                                                         placeholder="Name"
                                                         value={traveler.traveler_name}
                                                         onChange={(e) => updateEditTraveler(index, 'traveler_name', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                         required
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Phone</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Phone</label>
                                                     <input
                                                         type="text"
                                                         placeholder="Phone"
                                                         value={traveler.phone}
                                                         onChange={(e) => updateEditTraveler(index, 'phone', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Age</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Age</label>
                                                     <input
                                                         type="number"
                                                         placeholder="Age"
                                                         value={traveler.age}
                                                         onChange={(e) => updateEditTraveler(index, 'age', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Gender</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Gender</label>
                                                     <select
                                                         value={traveler.gender}
                                                         onChange={(e) => updateEditTraveler(index, 'gender', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white' : 'bg-white border-gray-300'}`}
                                                     >
                                                         <option value="Male">Male</option>
                                                         <option value="Female">Female</option>
@@ -1533,11 +2150,11 @@ const YatraBookingPage = () => {
                                                 </div>
                                                 <div className="flex items-end gap-2">
                                                     <div className="flex-1">
-                                                        <label className="block text-xs text-gray-500">Relation</label>
+                                                        <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Relation</label>
                                                         <select
                                                             value={traveler.relation}
                                                             onChange={(e) => updateEditTraveler(index, 'relation', e.target.value)}
-                                                            className="w-full p-1 border rounded text-sm"
+                                                            className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white' : 'bg-white border-gray-300'}`}
                                                         >
                                                             <option value="Self">Self</option>
                                                             <option value="Spouse">Spouse</option>
@@ -1563,14 +2180,14 @@ const YatraBookingPage = () => {
 
                                     {/* SEAT SELECTION */}
                                     <div className="md:col-span-2 mt-4">
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
                                             🪑 Select Seats (Choose {1 + travelers.length} seats)
                                         </label>
-                                        <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+                                        <div className={`${isDarkMode ? 'bg-slate-700' : 'bg-white'} rounded-xl p-4 border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} shadow-sm`}>
                                             {selectedTrip?.seats && selectedTrip.seats.length > 0 ? (
                                                 renderSeats(selectedTrip.seats, true, editingCustomer?.id)
                                             ) : (
-                                                <p className="text-gray-500 text-sm text-center py-4">
+                                                <p className={`text-sm text-center py-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                                                     No seats available for this trip.
                                                 </p>
                                             )}
@@ -1596,7 +2213,7 @@ const YatraBookingPage = () => {
                                             setEditNewExpenseName('');
                                             setEditNewExpenseAmount('');
                                         }}
-                                        className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                                        className={`px-6 py-2 rounded-lg transition ${isDarkMode ? 'bg-slate-600 hover:bg-slate-500 text-white' : 'bg-gray-300 hover:bg-gray-400'}`}
                                     >
                                         Cancel
                                     </button>
@@ -1607,61 +2224,61 @@ const YatraBookingPage = () => {
 
                     {/* Add Customer Form */}
                     {showAddCustomer && !showEditCustomerForm && (
-                        <div className="bg-gray-50 rounded-lg p-4 mb-4 border">
-                            <h3 className="font-semibold mb-3">Add Customer to Trip</h3>
+                        <div className={`${isDarkMode ? 'bg-slate-700' : 'bg-gray-50'} rounded-lg p-4 mb-4 border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'}`}>
+                            <h3 className={`font-semibold mb-3 ${isDarkMode ? 'text-white' : ''}`}>Add Customer to Trip</h3>
                             <form onSubmit={handleAddCustomer}>
                                 <div className="grid md:grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Phone Number *</label>
                                         <input
                                             type="text"
                                             placeholder="Enter 10-digit phone"
                                             value={searchPhone}
                                             onChange={handlePhoneChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             maxLength="10"
                                             required
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name *</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Customer Name *</label>
                                         <input
                                             type="text"
                                             name="customer_name"
                                             value={customerFormData.customer_name}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             required
                                         />
                                     </div>
                                     {foundCustomer && (
-                                        <div className="md:col-span-2 bg-green-50 p-2 rounded-lg border border-green-200">
-                                            <p className="text-green-700 font-semibold">✅ Found: {foundCustomer.customer_name || 'Unknown'}</p>
+                                        <div className="md:col-span-2 bg-green-50 dark:bg-green-900/20 p-2 rounded-lg border border-green-200 dark:border-green-700">
+                                            <p className="text-green-700 dark:text-green-400 font-semibold">✅ Found: {foundCustomer.customer_name || 'Unknown'}</p>
                                         </div>
                                     )}
                                     {isNewCustomer && (
-                                        <div className="md:col-span-2 bg-yellow-50 p-2 rounded-lg border border-yellow-200">
-                                            <p className="text-yellow-700">⚠️ New Customer - Will be added to customers list</p>
+                                        <div className="md:col-span-2 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded-lg border border-yellow-200 dark:border-yellow-700">
+                                            <p className="text-yellow-700 dark:text-yellow-400">⚠️ New Customer - Will be added to customers list</p>
                                         </div>
                                     )}
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Location</label>
                                         <input
                                             type="text"
                                             name="location"
                                             value={customerFormData.location}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             placeholder="Delhi, Gurgaon, etc."
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Pickup Point</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Pickup Point</label>
                                         <select
                                             name="pickup_point"
                                             value={customerFormData.pickup_point}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         >
                                             <option value="">Select Pickup Point</option>
                                             {pickupOptions.map((point, index) => (
@@ -1672,25 +2289,25 @@ const YatraBookingPage = () => {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Advance Amount (₹)</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Advance Amount (₹)</label>
                                         <input
                                             type="number"
                                             name="advance_amount"
                                             value={customerFormData.advance_amount}
                                             onChange={handleCustomerInputChange}
                                             placeholder="Enter advance amount"
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             min="0"
                                             step="1"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Collected By</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Collected By</label>
                                         <select
                                             name="advance_collected_by"
                                             value={customerFormData.advance_collected_by}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         >
                                             <option value="Sanjeev">Sanjeev</option>
                                             <option value="Rajeev">Rajeev</option>
@@ -1698,46 +2315,46 @@ const YatraBookingPage = () => {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Advance Collected Date</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Advance Collected Date</label>
                                         <input
                                             type="date"
                                             name="advance_collected_date"
                                             value={customerFormData.advance_collected_date}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Referral ID</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Referral ID</label>
                                         <input
                                             type="text"
                                             name="referral_id"
                                             value={customerFormData.referral_id}
                                             onChange={handleCustomerInputChange}
                                             placeholder="Referral ID (optional)"
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Discount (₹)</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Discount (₹)</label>
                                         <input
                                             type="number"
                                             name="discount"
                                             value={customerFormData.discount}
                                             onChange={handleCustomerInputChange}
                                             placeholder="Enter discount amount"
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             min="0"
                                             step="1"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Discount Given By</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Discount Given By</label>
                                         <select
                                             name="discount_given_by"
                                             value={customerFormData.discount_given_by}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                         >
                                             <option value="GMC">GMC</option>
                                             <option value="Rajeev">Rajeev</option>
@@ -1745,21 +2362,21 @@ const YatraBookingPage = () => {
                                         </select>
                                     </div>
                                     <div className="md:col-span-2">
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Extra Expenses</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Extra Expenses</label>
                                         <div className="flex gap-2 mb-2">
                                             <input
                                                 type="text"
                                                 placeholder="Expense name (e.g., Extra Bed)"
                                                 value={newExpenseName}
                                                 onChange={(e) => setNewExpenseName(e.target.value)}
-                                                className="flex-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                                className={`flex-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             />
                                             <input
                                                 type="number"
                                                 placeholder="Amount"
                                                 value={newExpenseAmount}
                                                 onChange={(e) => setNewExpenseAmount(e.target.value)}
-                                                className="w-32 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                                className={`w-32 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                                 min="0"
                                                 step="1"
                                             />
@@ -1772,10 +2389,10 @@ const YatraBookingPage = () => {
                                             </button>
                                         </div>
                                         {extraExpensesList.length > 0 && (
-                                            <div className="bg-white rounded-lg border p-2">
+                                            <div className={`${isDarkMode ? 'bg-slate-700' : 'bg-white'} rounded-lg border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} p-2`}>
                                                 {extraExpensesList.map((item, index) => (
-                                                    <div key={index} className="flex justify-between items-center border-b py-1 last:border-b-0">
-                                                        <span className="text-sm">{item.name}: ₹{item.amount}</span>
+                                                    <div key={index} className={`flex justify-between items-center border-b ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} py-1 last:border-b-0`}>
+                                                        <span className={`text-sm ${isDarkMode ? 'text-gray-300' : ''}`}>{item.name}: ₹{item.amount}</span>
                                                         <button
                                                             type="button"
                                                             onClick={() => removeExtraExpense(index)}
@@ -1785,20 +2402,20 @@ const YatraBookingPage = () => {
                                                         </button>
                                                     </div>
                                                 ))}
-                                                <div className="text-sm font-bold text-right mt-1 border-t pt-1">
+                                                <div className={`text-sm font-bold text-right mt-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} pt-1 ${isDarkMode ? 'text-white' : ''}`}>
                                                     Total Extra: ₹{getTotalExtraExpenses()}
                                                 </div>
                                             </div>
                                         )}
                                     </div>
                                     <div className="md:col-span-2">
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-1`}>Remarks</label>
                                         <input
                                             type="text"
                                             name="remarks"
                                             value={customerFormData.remarks}
                                             onChange={handleCustomerInputChange}
-                                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                            className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                             placeholder="Any special notes..."
                                         />
                                     </div>
@@ -1807,8 +2424,8 @@ const YatraBookingPage = () => {
                                     <div className="md:col-span-2">
                                         <div className="flex justify-between items-center mb-2">
                                             <div>
-                                                <label className="block text-sm font-medium text-gray-700">Travelers</label>
-                                                <p className="text-xs text-gray-400">Total Seats: <strong>{getTotalSeats()}</strong> (1 Self + {travelers.length} additional)</p>
+                                                <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Travelers</label>
+                                                <p className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>Total Seats: <strong className={isDarkMode ? 'text-white' : ''}>{getTotalSeats()}</strong> (1 Self + {travelers.length} additional)</p>
                                             </div>
                                             <button
                                                 type="button"
@@ -1819,37 +2436,37 @@ const YatraBookingPage = () => {
                                             </button>
                                         </div>
 
-                                        <div className="bg-blue-50 rounded-lg p-3 border border-blue-200 mb-2">
+                                        <div className={`${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-blue-50 border-blue-200'} rounded-lg p-3 border mb-2`}>
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded">SELF</span>
-                                                <span className="text-sm font-medium text-gray-700">Customer: {customerFormData.customer_name || 'Not set'}</span>
+                                                <span className="text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 rounded">SELF</span>
+                                                <span className={`text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>Customer: {customerFormData.customer_name || 'Not set'}</span>
                                             </div>
                                             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Name</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Name</label>
                                                     <input
                                                         type="text"
                                                         value={customerFormData.customer_name || ''}
-                                                        className="w-full p-1.5 border rounded text-sm bg-gray-50"
+                                                        className={`w-full p-1.5 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white' : 'bg-gray-50 border-gray-200'}`}
                                                         disabled
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Age</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Age</label>
                                                     <input
                                                         type="number"
                                                         placeholder="Age"
                                                         value={customerFormData.customer_age}
                                                         onChange={(e) => setCustomerFormData({ ...customerFormData, customer_age: e.target.value })}
-                                                        className="w-full p-1.5 border rounded text-sm"
+                                                        className={`w-full p-1.5 border rounded text-sm ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Gender</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Gender</label>
                                                     <select
                                                         value={customerFormData.customer_gender}
                                                         onChange={(e) => setCustomerFormData({ ...customerFormData, customer_gender: e.target.value })}
-                                                        className="w-full p-1.5 border rounded text-sm"
+                                                        className={`w-full p-1.5 border rounded text-sm ${isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
                                                     >
                                                         <option value="Male">Male</option>
                                                         <option value="Female">Female</option>
@@ -1860,44 +2477,44 @@ const YatraBookingPage = () => {
                                         </div>
 
                                         {travelers.map((traveler, index) => (
-                                            <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-2 p-2 bg-white rounded-lg border mb-2">
+                                            <div key={index} className={`grid grid-cols-1 md:grid-cols-5 gap-2 p-2 ${isDarkMode ? 'bg-slate-700' : 'bg-white'} rounded-lg border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} mb-2`}>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Name *</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Name *</label>
                                                     <input
                                                         type="text"
                                                         placeholder="Name"
                                                         value={traveler.traveler_name}
                                                         onChange={(e) => updateTraveler(index, 'traveler_name', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                         required
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Phone</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Phone</label>
                                                     <input
                                                         type="text"
                                                         placeholder="Phone"
                                                         value={traveler.phone}
                                                         onChange={(e) => updateTraveler(index, 'phone', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Age</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Age</label>
                                                     <input
                                                         type="number"
                                                         placeholder="Age"
                                                         value={traveler.age}
                                                         onChange={(e) => updateTraveler(index, 'age', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white placeholder-slate-400' : 'bg-white border-gray-300'}`}
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="block text-xs text-gray-500">Gender</label>
+                                                    <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Gender</label>
                                                     <select
                                                         value={traveler.gender}
                                                         onChange={(e) => updateTraveler(index, 'gender', e.target.value)}
-                                                        className="w-full p-1 border rounded text-sm"
+                                                        className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white' : 'bg-white border-gray-300'}`}
                                                     >
                                                         <option value="Male">Male</option>
                                                         <option value="Female">Female</option>
@@ -1906,11 +2523,11 @@ const YatraBookingPage = () => {
                                                 </div>
                                                 <div className="flex items-end gap-2">
                                                     <div className="flex-1">
-                                                        <label className="block text-xs text-gray-500">Relation</label>
+                                                        <label className={`block text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Relation</label>
                                                         <select
                                                             value={traveler.relation}
                                                             onChange={(e) => updateTraveler(index, 'relation', e.target.value)}
-                                                            className="w-full p-1 border rounded text-sm"
+                                                            className={`w-full p-1 border rounded text-sm ${isDarkMode ? 'bg-slate-600 border-slate-500 text-white' : 'bg-white border-gray-300'}`}
                                                         >
                                                             <option value="Self">Self</option>
                                                             <option value="Spouse">Spouse</option>
@@ -1936,14 +2553,14 @@ const YatraBookingPage = () => {
 
                                     {/* SEAT SELECTION */}
                                     <div className="md:col-span-2 mt-4">
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        <label className={`block text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-700'} mb-2`}>
                                             🪑 Select Seats (Choose {getTotalSeats()} seats)
                                         </label>
-                                        <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+                                        <div className={`${isDarkMode ? 'bg-slate-700' : 'bg-white'} rounded-xl p-4 border ${isDarkMode ? 'border-slate-600' : 'border-gray-200'} shadow-sm`}>
                                             {selectedTrip?.seats && selectedTrip.seats.length > 0 ? (
                                                 renderSeats(selectedTrip.seats, false)
                                             ) : (
-                                                <p className="text-gray-500 text-sm text-center py-4">
+                                                <p className={`text-sm text-center py-4 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                                                     No seats available for this trip. Please create the trip first.
                                                 </p>
                                             )}
@@ -1993,7 +2610,7 @@ const YatraBookingPage = () => {
                                                 discount_given_by: 'GMC',
                                             });
                                         }}
-                                        className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                                        className={`px-6 py-2 rounded-lg transition ${isDarkMode ? 'bg-slate-600 hover:bg-slate-500 text-white' : 'bg-gray-300 hover:bg-gray-400'}`}
                                     >
                                         Cancel
                                     </button>
@@ -2002,109 +2619,140 @@ const YatraBookingPage = () => {
                         </div>
                     )}
 
-                    {/* Customers List - Now with Seat Numbers */}
+                    {/* Customers List */}
                     <div className="mt-4">
-                        <h3 className="font-semibold mb-3">Customers ({selectedTrip.customers?.length || 0})</h3>
+                        <div className={`flex justify-between items-center mb-3 ${isDarkMode ? 'text-white' : ''}`}>
+                            <h3 className="font-semibold">Customers ({selectedTrip.customers?.length || 0})</h3>
+                            {selectedTrip.customers?.length > 0 && (
+                                <button
+                                    onClick={() => exportTripCustomers(selectedTrip)}
+                                    className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm transition"
+                                >
+                                    📥 Export All
+                                </button>
+                            )}
+                        </div>
                         {selectedTrip.customers?.length === 0 ? (
-                            <p className="text-gray-400 text-center py-4">No customers added yet</p>
+                            <p className={`${isDarkMode ? 'text-gray-400' : 'text-gray-400'} text-center py-4`}>No customers added yet</p>
                         ) : (
                             <div className="overflow-x-auto">
                                 <table className="w-full">
-                                    <thead className="bg-gray-50">
+                                    <thead className={`${isDarkMode ? 'bg-slate-700' : 'bg-gray-50'}`}>
                                         <tr>
-                                            <th className="px-3 py-2 text-left text-sm font-medium text-gray-600">#</th>
-                                            <th className="px-3 py-2 text-left text-sm font-medium text-gray-600">Customer</th>
-                                            <th className="px-3 py-2 text-left text-sm font-medium text-gray-600">Phone</th>
-                                            <th className="px-3 py-2 text-left text-sm font-medium text-gray-600">Location</th>
-                                            <th className="px-3 py-2 text-left text-sm font-medium text-gray-600">Pickup</th>
-                                            <th className="px-3 py-2 text-center text-sm font-medium text-gray-600">Seats</th>
-                                            <th className="px-3 py-2 text-center text-sm font-medium text-gray-600">Seat Numbers</th>
-                                            <th className="px-3 py-2 text-left text-sm font-medium text-gray-600">Travelers</th>
-                                            <th className="px-3 py-2 text-right text-sm font-medium text-gray-600">Total</th>
-                                            <th className="px-3 py-2 text-right text-sm font-medium text-gray-600">Advance</th>
-                                            <th className="px-3 py-2 text-right text-sm font-medium text-gray-600">Discount</th>
-                                            <th className="px-3 py-2 text-right text-sm font-medium text-gray-600">Balance</th>
-                                            <th className="px-3 py-2 text-left text-sm font-medium text-gray-600">Referral</th>
-                                            <th className="px-3 py-2 text-center text-sm font-medium text-gray-600">Actions</th>
+                                            <th className={`px-3 py-2 text-left text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>#</th>
+                                            <th className={`px-3 py-2 text-left text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Customer</th>
+                                            <th className={`px-3 py-2 text-left text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Phone</th>
+                                            <th className={`px-3 py-2 text-left text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Location</th>
+                                            <th className={`px-3 py-2 text-left text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Pickup</th>
+                                            <th className={`px-3 py-2 text-center text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Seats</th>
+                                            <th className={`px-3 py-2 text-center text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Seat Numbers</th>
+                                            <th className={`px-3 py-2 text-left text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Travelers</th>
+                                            <th className={`px-3 py-2 text-right text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Total</th>
+                                            <th className={`px-3 py-2 text-right text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Advance</th>
+                                            <th className={`px-3 py-2 text-right text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Discount</th>
+                                            <th className={`px-3 py-2 text-right text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Balance</th>
+                                            <th className={`px-3 py-2 text-left text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Referral</th>
+                                            <th className={`px-3 py-2 text-center text-sm font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>Actions</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-gray-200">
-                                        {selectedTrip.customers.map((customer, index) => {
-                                            return (
-                                                <tr key={customer.id} className="hover:bg-gray-50">
-                                                    <td className="px-3 py-2 text-sm text-gray-600">{index + 1}</td>
-                                                    <td className="px-3 py-2 text-sm text-gray-800 font-medium">{customer.customer_name}</td>
-                                                    <td className="px-3 py-2 text-sm text-gray-600">{customer.phone}</td>
-                                                    <td className="px-3 py-2 text-sm text-gray-600">{customer.location || '-'}</td>
-                                                    <td className="px-3 py-2 text-sm text-gray-600">{customer.pickup_point || '-'}</td>
-                                                    <td className="px-3 py-2 text-sm text-center text-gray-600 font-bold">{customer.total_seats}</td>
-                                                    <td className="px-3 py-2 text-sm text-center text-gray-600">
-                                                        {customer.seat_numbers && customer.seat_numbers.length > 0 ? (
-                                                            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-medium">
-                                                                {customer.seat_numbers.join(', ')}
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-gray-400">-</span>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-sm text-gray-600">
-                                                        {customer.travelers?.map((t, i) => (
-                                                            <div key={i} className="text-xs border-b border-gray-100 py-0.5">
-                                                                {t.traveler_name} ({t.relation}, {t.gender}, {t.age || 'N/A'} yrs) - {t.phone || 'N/A'}
-                                                            </div>
-                                                        ))}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-sm text-right font-bold">
-                                                        ₹{(parseFloat(customer.total_amount) || 0).toFixed(2)}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-sm text-right text-green-600">
-                                                        ₹{(parseFloat(customer.advance_amount) || 0).toFixed(2)}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-sm text-right text-blue-600">
-                                                        ₹{(parseFloat(customer.discount) || 0).toFixed(2)}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-sm text-right text-red-600">
-                                                        ₹{(parseFloat(customer.balance_amount) || 0).toFixed(2)}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-sm text-gray-600">{customer.referral_id || '-'}</td>
-                                                    <td className="px-3 py-2 text-sm text-center">
-                                                        <div className="flex gap-1 justify-center">
-                                                            <button
-                                                                onClick={() => handleEditCustomer(customer)}
-                                                                className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs transition"
-                                                            >
-                                                                ✏️
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleRemoveCustomer(customer.id)}
-                                                                className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs transition"
-                                                            >
-                                                                🗑️
-                                                            </button>
+                                    <tbody className={`divide-y ${isDarkMode ? 'divide-slate-700' : 'divide-gray-200'}`}>
+                                        {selectedTrip.customers.map((customer, index) => (
+                                            <tr key={customer.id} className={`hover:bg-gray-50 dark:hover:bg-slate-700/50 transition`}>
+                                                <td className={`px-3 py-2 text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-600'}`}>{index + 1}</td>
+                                                <td className={`px-3 py-2 text-sm font-medium ${isDarkMode ? 'text-white' : 'text-gray-800'}`}>{customer.customer_name}</td>
+                                                <td className={`px-3 py-2 text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{customer.phone}</td>
+                                                <td className={`px-3 py-2 text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{customer.location || '-'}</td>
+                                                <td className={`px-3 py-2 text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{customer.pickup_point || '-'}</td>
+                                                <td className={`px-3 py-2 text-sm text-center ${isDarkMode ? 'text-gray-300' : 'text-gray-600'} font-bold`}>{customer.total_seats}</td>
+                                                <td className={`px-3 py-2 text-sm text-center ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                                                    {customer.seat_numbers && customer.seat_numbers.length > 0 ? (
+                                                        <span className={`${isDarkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-700'} px-2 py-0.5 rounded text-xs font-medium`}>
+                                                            {customer.seat_numbers.join(', ')}
+                                                        </span>
+                                                    ) : (
+                                                        <span className={`${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}>-</span>
+                                                    )}
+                                                </td>
+                                                <td className={`px-3 py-2 text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                                                    {customer.travelers?.map((t, i) => (
+                                                        <div key={i} className={`text-xs border-b ${isDarkMode ? 'border-slate-600' : 'border-gray-100'} py-0.5`}>
+                                                            {t.traveler_name} ({t.relation}, {t.gender}, {t.age || 'N/A'} yrs) - {t.phone || 'N/A'}
                                                         </div>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
+                                                    ))}
+                                                </td>
+                                                <td className={`px-3 py-2 text-sm text-right font-bold ${isDarkMode ? 'text-white' : ''}`}>
+                                                    ₹{(parseFloat(customer.total_amount) || 0).toFixed(2)}
+                                                </td>
+                                                <td className={`px-3 py-2 text-sm text-right text-green-600 dark:text-green-400`}>
+                                                    ₹{(parseFloat(customer.advance_amount) || 0).toFixed(2)}
+                                                </td>
+                                                <td className={`px-3 py-2 text-sm text-right text-blue-600 dark:text-blue-400`}>
+                                                    ₹{(parseFloat(customer.discount) || 0).toFixed(2)}
+                                                </td>
+                                                <td className={`px-3 py-2 text-sm text-right text-red-600 dark:text-red-400`}>
+                                                    ₹{(parseFloat(customer.balance_amount) || 0).toFixed(2)}
+                                                </td>
+                                                <td className={`px-3 py-2 text-sm ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{customer.referral_id || '-'}</td>
+                                                <td className="px-3 py-2 text-sm text-center">
+                                                    <div className="flex flex-wrap gap-1 justify-center">
+                                                        <button
+                                                            onClick={() => handleEditCustomer(customer)}
+                                                            className="bg-blue-500 hover:bg-blue-600 text-white px-2 py-1 rounded text-xs transition"
+                                                            title="Edit"
+                                                        >
+                                                            ✏️
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleRemoveCustomer(customer.id)}
+                                                            className="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded text-xs transition"
+                                                            title="Remove"
+                                                        >
+                                                            🗑️
+                                                        </button>
+                                                        <button
+                                                            onClick={() => sendWhatsApp(customer)}
+                                                            className="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs transition"
+                                                            title="Send WhatsApp"
+                                                        >
+                                                            💬
+                                                        </button>
+                                                        <button
+                                                            onClick={() => generateReceipt(customer)}
+                                                            className="bg-purple-500 hover:bg-purple-600 text-white px-2 py-1 rounded text-xs transition"
+                                                            title="Receipt"
+                                                        >
+                                                            📄
+                                                        </button>
+                                                        <button
+                                                            onClick={() => viewCustomerHistory(customer.customer_id || customer.id)}
+                                                            className="bg-indigo-500 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs transition"
+                                                            title="History"
+                                                        >
+                                                            📋
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
                                     </tbody>
-                                    <tfoot className="bg-yellow-50 border-t-2 border-yellow-400">
+                                    <tfoot className={`${isDarkMode ? 'bg-slate-700 border-t-2 border-yellow-500' : 'bg-yellow-50 border-t-2 border-yellow-400'}`}>
                                         <tr>
-                                            <td colSpan="5" className="px-3 py-2 text-right font-bold">TOTALS:</td>
-                                            <td className="px-3 py-2 text-center font-bold">
+                                            <td colSpan="5" className={`px-3 py-2 text-right font-bold ${isDarkMode ? 'text-white' : ''}`}>TOTALS:</td>
+                                            <td className={`px-3 py-2 text-center font-bold ${isDarkMode ? 'text-white' : ''}`}>
                                                 {selectedTrip.customers?.reduce((sum, c) => sum + (c.total_seats || 0), 0) || 0}
                                             </td>
                                             <td className="px-3 py-2"></td>
                                             <td className="px-3 py-2"></td>
-                                            <td className="px-3 py-2 text-right font-bold text-purple-600">
+                                            <td className={`px-3 py-2 text-right font-bold ${isDarkMode ? 'text-purple-400' : 'text-purple-600'}`}>
                                                 ₹{(selectedTrip.customers?.reduce((sum, c) => sum + (parseFloat(c.total_amount) || 0), 0) || 0).toFixed(2)}
                                             </td>
-                                            <td className="px-3 py-2 text-right font-bold text-green-600">
+                                            <td className={`px-3 py-2 text-right font-bold ${isDarkMode ? 'text-green-400' : 'text-green-600'}`}>
                                                 ₹{(selectedTrip.customers?.reduce((sum, c) => sum + (parseFloat(c.advance_amount) || 0), 0) || 0).toFixed(2)}
                                             </td>
-                                            <td className="px-3 py-2 text-right font-bold text-blue-600">
+                                            <td className={`px-3 py-2 text-right font-bold ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>
                                                 ₹{(selectedTrip.customers?.reduce((sum, c) => sum + (parseFloat(c.discount) || 0), 0) || 0).toFixed(2)}
                                             </td>
-                                            <td className="px-3 py-2 text-right font-bold text-red-600">
+                                            <td className={`px-3 py-2 text-right font-bold ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
                                                 ₹{(selectedTrip.customers?.reduce((sum, c) => sum + (parseFloat(c.balance_amount) || 0), 0) || 0).toFixed(2)}
                                             </td>
                                             <td className="px-3 py-2"></td>

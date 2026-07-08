@@ -1,57 +1,123 @@
-import axios from "axios";
+import api from "./api";
 
-const API = "/api/customers";
+// ===== SAFE ARRAY HELPER =====
+const safeArray = (data) => {
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') {
+        if (Array.isArray(data.data)) return data.data;
+        if (Array.isArray(data.customers)) return data.customers;
+        if (Array.isArray(data.results)) return data.results;
+        if (Array.isArray(data.items)) return data.items;
+    }
+    return [];
+};
 
-// Get all customers
+// ===== GET ALL CUSTOMERS =====
 export const getCustomers = async () => {
-  const response = await axios.get(API);
-  return response.data;
+    try {
+        const response = await api.get("/customers");
+        return safeArray(response.data);
+    } catch (error) {
+        console.error("Error fetching customers:", error);
+        return [];
+    }
 };
 
-// Get single customer by ID
+// ===== GET CUSTOMER BY ID =====
 export const getCustomer = async (id) => {
-  const response = await axios.get(`${API}/${id}`);
-  return response.data;
+    try {
+        const response = await api.get(`/customers/${id}`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching customer:", error);
+        throw error;
+    }
 };
 
-// Create new customer
+// ===== GET CUSTOMER BY ID (alias) =====
+export const getCustomerById = async (id) => {
+    try {
+        const response = await api.get(`/customers/${id}`);
+        return response.data;
+    } catch (error) {
+        console.error("Error fetching customer:", error);
+        throw error;
+    }
+};
+
+// ===== CREATE CUSTOMER =====
 export const createCustomer = async (data) => {
-  const response = await axios.post(API, data);
-  return response.data;
+    try {
+        const response = await api.post("/customers", data);
+        return response.data;
+    } catch (error) {
+        console.error("Error creating customer:", error);
+        throw error;
+    }
 };
 
-// Update customer
+// ===== UPDATE CUSTOMER =====
 export const updateCustomer = async (id, data) => {
-  const response = await axios.put(`${API}/${id}`, data);
-  return response.data;
+    try {
+        const response = await api.put(`/customers/${id}`, data);
+        return response.data;
+    } catch (error) {
+        console.error("Error updating customer:", error);
+        throw error;
+    }
 };
 
-// Delete customer
+// ===== DELETE CUSTOMER =====
 export const deleteCustomer = async (id) => {
-  const response = await axios.delete(`${API}/${id}`);
-  return response.data;
+    try {
+        const response = await api.delete(`/customers/${id}`);
+        return response.data;
+    } catch (error) {
+        console.error("Error deleting customer:", error);
+        throw error;
+    }
 };
 
-// Check if customer exists (for duplicate check)
-export const checkCustomer = async (mobileNumber) => {
-  const response = await axios.get(`${API}/check/${mobileNumber}`);
-  return response.data;
+// ===== CHECK IF CUSTOMER EXISTS =====
+export const checkCustomer = async (mobile) => {
+    try {
+        const response = await api.get(`/customers/check/${mobile}`);
+        return response.data;
+    } catch (error) {
+        console.error("Error checking customer:", error);
+        throw error;
+    }
 };
 
-// Update customer group
-export const updateCustomerGroup = async (id, group) => {
-  const response = await axios.patch(`${API}/${id}/group`, { group });
-  return response.data;
+// ===== UPDATE CUSTOMER GROUP =====
+export const updateCustomerGroup = async (id, group_type) => {
+    try {
+        const response = await api.patch(`/customers/${id}/group`, { group_type });
+        return response.data;
+    } catch (error) {
+        console.error("Error updating customer group:", error);
+        throw error;
+    }
 };
 
-// Bulk update customer group
-export const bulkUpdateCustomerGroup = async (ids, group) => {
-  const response = await axios.put(`${API}/bulk/group`, { ids, group_type: group });
-  return response.data;
+// ===== BULK UPDATE CUSTOMER GROUP =====
+export const bulkUpdateCustomerGroup = async (ids, group_type) => {
+    try {
+        const response = await api.put("/customers/bulk/group", { ids, group_type });
+        return response.data;
+    } catch (error) {
+        console.error("Error bulk updating customer group:", error);
+        throw error;
+    }
 };
 
-// Get customers by group (daily-reach, do-not-reach, unsubscribed)
+// ===== GET CUSTOMERS BY GROUP =====
 export const getCustomersByGroup = async (group) => {
-  const response = await axios.get(`${API}/group/${group}`);
-  return response.data;
+    try {
+        const response = await api.get(`/customers/group/${group}`);
+        return safeArray(response.data);
+    } catch (error) {
+        console.error("Error fetching customers by group:", error);
+        return [];
+    }
 };

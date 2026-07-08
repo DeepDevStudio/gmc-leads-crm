@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getActivities } from "../services/activityService";
-import axios from "axios";
+import api from "../services/api";
 import {
   FaSearch,
   FaUserTag,
@@ -13,6 +13,7 @@ import {
   FaSortAmountDown,
   FaSortAmountUp,
   FaPhone,
+  FaFilter,
 } from "react-icons/fa";
 import { HiOutlineRefresh } from "react-icons/hi";
 
@@ -26,33 +27,93 @@ function ActivityPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filterRole, setFilterRole] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [sortBy, setSortBy] = useState("count");
   const [sortOrder, setSortOrder] = useState("desc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
+  const [message, setMessage] = useState({ text: "", type: "" });
+  const [actionLoading, setActionLoading] = useState(false);
+  const [selectedUserActivities, setSelectedUserActivities] = useState([]);
+  const [activityTypes, setActivityTypes] = useState([]);
+  const [activityStats, setActivityStats] = useState({
+    total: 0,
+    today: 0,
+    week: 0,
+    month: 0,
+    byUser: [],
+    commonActivities: []
+  });
+
+  // ===== DARK MODE =====
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  // Stats
+  const [stats, setStats] = useState({
+    totalActivities: 0,
+    totalUsers: 0,
+    avgPerUser: 0,
+    mostActiveUser: ''
+  });
 
   useEffect(() => {
     loadData();
   }, []);
 
+  useEffect(() => {
+    calculateStats();
+  }, [activities, users, userActivityCounts]);
+
+  const calculateStats = () => {
+    const totalActivities = activities.length;
+    const totalUsers = users.length;
+    const avgPerUser = totalUsers > 0 ? Math.round(totalActivities / totalUsers) : 0;
+    
+    let maxCount = 0;
+    let mostActiveUser = '';
+    Object.entries(userActivityCounts).forEach(([name, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        mostActiveUser = name;
+      }
+    });
+
+    setStats({ totalActivities, totalUsers, avgPerUser, mostActiveUser });
+  };
+
   const loadData = async () => {
     setLoading(true);
     try {
       const activityData = await getActivities();
-      setActivities(activityData);
+      setActivities(Array.isArray(activityData) ? activityData : []);
 
-      const userResponse = await axios.get('/api/users');
-      const usersList = userResponse.data;
-      setUsers(usersList);
+      const userResponse = await api.get('/users');
+      const usersList = userResponse.data || [];
+      setUsers(Array.isArray(usersList) ? usersList : []);
 
       const roles = {};
       const details = {};
-      usersList.forEach(user => {
-        roles[user.username] = user.role || 'employee';
+      (Array.isArray(usersList) ? usersList : []).forEach(user => {
+        roles[user.username] = user.role || 'team';
         details[user.username] = {
           full_name: user.full_name || user.username,
           whatsapp_number: user.whatsapp_number || 'N/A',
-          role: user.role || 'employee',
+          role: user.role || 'team',
           created_at: user.created_at,
           is_active: user.is_active,
         };
@@ -61,22 +122,115 @@ function ActivityPage() {
       setUserDetails(details);
 
       const counts = {};
-      activityData.forEach(item => {
+      (Array.isArray(activityData) ? activityData : []).forEach(item => {
         if (item.username) {
           counts[item.username] = (counts[item.username] || 0) + 1;
         }
       });
       setUserActivityCounts(counts);
 
+      // Load activity stats
+      try {
+        const statsResponse = await api.get('/activity/stats');
+        const statsData = statsResponse.data || {};
+        setActivityStats({
+          total: statsData.total || 0,
+          today: statsData.today || 0,
+          week: statsData.week || 0,
+          month: statsData.month || 0,
+          byUser: Array.isArray(statsData.byUser) ? statsData.byUser : [],
+          commonActivities: Array.isArray(statsData.commonActivities) ? statsData.commonActivities : []
+        });
+      } catch (error) {
+        console.error("Error loading activity stats:", error);
+        setActivityStats({
+          total: 0,
+          today: 0,
+          week: 0,
+          month: 0,
+          byUser: [],
+          commonActivities: []
+        });
+      }
+
+      // Load activity types
+      try {
+        const typesResponse = await api.get('/activity/types');
+        const typesData = typesResponse.data || [];
+        setActivityTypes(Array.isArray(typesData) ? typesData : []);
+      } catch (error) {
+        console.error("Error loading activity types:", error);
+        setActivityTypes([]);
+      }
+
     } catch (error) {
       console.error("Error loading data:", error);
+      showMessage("Failed to load data", "error");
     } finally {
       setLoading(false);
     }
   };
 
+  const loadUserActivities = async (username) => {
+    try {
+      const response = await api.get(`/activity/user/${username}`);
+      const data = response.data || [];
+      setSelectedUserActivities(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Error loading user activities:", error);
+      setSelectedUserActivities([]);
+    }
+  };
+
+  const showMessage = (text, type = "success") => {
+    setMessage({ text, type });
+    setTimeout(() => setMessage({ text: "", type: "" }), 3000);
+  };
+
+  const exportActivity = () => {
+    if (filteredUsers.length === 0) {
+      showMessage("No data to export", "error");
+      return;
+    }
+
+    const headers = ['#', 'User', 'Full Name', 'Role', 'Activity Count', 'WhatsApp', 'Status'];
+    const rows = filteredUsers.map((user, index) => [
+      index + 1,
+      user.username,
+      userDetails[user.username]?.full_name || user.username,
+      userRoles[user.username] || 'team',
+      userActivityCounts[user.username] || 0,
+      userDetails[user.username]?.whatsapp_number || 'N/A',
+      userDetails[user.username]?.is_active ? 'Active' : 'Inactive'
+    ]);
+
+    let csv = headers.join(',') + '\n';
+    rows.forEach(row => {
+      csv += row.join(',') + '\n';
+    });
+
+    csv += '\n\n📊 SUMMARY\n';
+    csv += `Total Activities,${stats.totalActivities}\n`;
+    csv += `Total Users,${stats.totalUsers}\n`;
+    csv += `Average per User,${stats.avgPerUser}\n`;
+    csv += `Most Active User,${stats.mostActiveUser}\n`;
+    csv += `Activities Today,${activityStats.today || 0}\n`;
+    csv += `Activities This Week,${activityStats.week || 0}\n`;
+    csv += `Activities This Month,${activityStats.month || 0}\n`;
+    csv += `Exported On,${new Date().toLocaleString()}\n`;
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `activity_report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    showMessage("📥 Activity exported successfully!", "success");
+  };
+
   useEffect(() => {
-    let result = [...users];
+    let result = Array.isArray(users) ? [...users] : [];
 
     if (search) {
       const searchLower = search.toLowerCase();
@@ -87,7 +241,7 @@ function ActivityPage() {
     }
 
     if (filterRole) {
-      result = result.filter(user => (user.role || 'employee') === filterRole);
+      result = result.filter(user => (user.role || 'team') === filterRole);
     }
 
     if (sortBy === "count") {
@@ -105,418 +259,424 @@ function ActivityPage() {
     }
 
     setFilteredUsers(result);
-  }, [search, filterRole, users, userActivityCounts, sortBy, sortOrder]);
+    setCurrentPage(1);
+  }, [users, search, filterRole, sortBy, sortOrder, userActivityCounts]);
 
-  const getUserActivities = (username) => {
-    return activities.filter(item => item.username === username);
-  };
-
-  const getUserStats = (username) => {
-    const userActivities = getUserActivities(username);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay());
-    weekStart.setHours(0, 0, 0, 0);
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const todayCount = userActivities.filter(item => new Date(item.created_at) >= today).length;
-    const weekCount = userActivities.filter(item => new Date(item.created_at) >= weekStart).length;
-    const monthCount = userActivities.filter(item => new Date(item.created_at) >= monthStart).length;
-
-    const created = userActivities.filter(item => 
-      item.activity?.toLowerCase().includes('created') || 
-      item.activity?.toLowerCase().includes('add')
-    ).length;
-    const updated = userActivities.filter(item => 
-      item.activity?.toLowerCase().includes('updated') || 
-      item.activity?.toLowerCase().includes('edited')
-    ).length;
-    const deleted = userActivities.filter(item => 
-      item.activity?.toLowerCase().includes('deleted') || 
-      item.activity?.toLowerCase().includes('removed')
-    ).length;
-    const sent = userActivities.filter(item => 
-      item.activity?.toLowerCase().includes('sent') || 
-      item.activity?.toLowerCase().includes('broadcast')
-    ).length;
-
-    return {
-      total: userActivities.length,
-      today: todayCount,
-      week: weekCount,
-      month: monthCount,
-      created,
-      updated,
-      deleted,
-      sent
-    };
-  };
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const paginatedUsers = filteredUsers.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   const getRoleBadge = (role) => {
-    const map = {
-      'admin': { label: 'Admin', color: 'bg-gradient-to-r from-red-500 to-red-600', icon: '👑' },
-      'manager': { label: 'Manager', color: 'bg-gradient-to-r from-blue-500 to-blue-600', icon: '📊' },
-      'employee': { label: 'Employee', color: 'bg-gradient-to-r from-slate-500 to-slate-600', icon: '👤' }
-    };
-    return map[role] || map['employee'];
+    switch(role) {
+      case 'admin': return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-700';
+      case 'developer': return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700';
+      case 'team': return 'bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700';
+      default: return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
+    }
   };
 
-  const getActivityType = (activity) => {
-    const text = activity?.toLowerCase() || '';
-    const types = [
-      { keywords: ['created', 'add'], label: 'Created', color: 'bg-emerald-100 text-emerald-700', icon: '✅' },
-      { keywords: ['updated', 'edited'], label: 'Updated', color: 'bg-blue-100 text-blue-700', icon: '📝' },
-      { keywords: ['deleted', 'removed'], label: 'Deleted', color: 'bg-rose-100 text-rose-700', icon: '🗑️' },
-      { keywords: ['sent', 'broadcast'], label: 'Sent', color: 'bg-purple-100 text-purple-700', icon: '📤' },
-      { keywords: ['login'], label: 'Login', color: 'bg-indigo-100 text-indigo-700', icon: '🔐' },
-      { keywords: ['logout'], label: 'Logout', color: 'bg-slate-100 text-slate-600', icon: '🚪' },
-    ];
-    const match = types.find(t => t.keywords.some(k => text.includes(k)));
-    return match || { label: 'Activity', color: 'bg-slate-100 text-slate-600', icon: '📋' };
+  const getTypeBadge = (type) => {
+    const types = {
+      'Created': 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+      'Updated': 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+      'Deleted': 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+      'Sent': 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+      'Switched': 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+      'Logged': 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+    };
+    return types[type] || types['Logged'];
   };
 
   const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diff = Math.floor((now - date) / (1000 * 60));
-    if (diff < 1) return 'Just now';
-    if (diff < 60) return `${diff}m ago`;
-    if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
-    if (diff < 43200) return `${Math.floor(diff / 1440)}d ago`;
-    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    if (!dateString) return '';
+    return new Date(dateString).toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
   };
 
-  const openUserProfile = (username) => {
-    setSelectedUser(username);
-    setShowProfileModal(true);
-  };
-
-  const closeUserProfile = () => {
-    setShowProfileModal(false);
-    setSelectedUser(null);
-  };
-
-  const clearFilters = () => {
-    setSearch("");
-    setFilterRole("");
-    setSortBy("count");
-    setSortOrder("desc");
-  };
-
-  const totalUsers = users.length;
-  const totalActivities = activities.length;
-  const activeUsers = users.filter(u => userActivityCounts[u.username] > 0).length;
-
-  const stats = [
-    { label: 'Total Users', value: totalUsers, icon: <FaUsers />, color: 'from-blue-500 to-blue-600', bg: 'bg-blue-50', text: 'text-blue-600' },
-    { label: 'Total Activities', value: totalActivities, icon: <FaChartLine />, color: 'from-purple-500 to-purple-600', bg: 'bg-purple-50', text: 'text-purple-600' },
-    { label: 'Active Users', value: activeUsers, icon: <FaUserCheck />, color: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50', text: 'text-emerald-600' },
-    { label: 'Inactive Users', value: totalUsers - activeUsers, icon: <FaUserClock />, color: 'from-slate-500 to-slate-600', bg: 'bg-slate-50', text: 'text-slate-600' },
-  ];
-
-  // User Profile Modal Component
-  const UserProfileModal = () => {
-    if (!selectedUser) return null;
-    const userData = userDetails[selectedUser] || {};
-    const stats = getUserStats(selectedUser);
-    const userActivities = getUserActivities(selectedUser)
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    const role = getRoleBadge(userData.role || 'employee');
-    const recentActivities = userActivities.slice(0, 20);
-    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.full_name || selectedUser)}&background=random&size=120&bold=true`;
-
-    return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-        <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
-          {/* Header */}
-          <div className="sticky top-0 z-10 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 p-6 rounded-t-2xl">
-            <button
-              onClick={closeUserProfile}
-              className="absolute top-4 right-4 text-white/70 hover:text-white transition p-2 rounded-full hover:bg-white/10"
-            >
-              <FaTimes className="text-xl" />
-            </button>
-            <div className="flex items-center gap-4">
-              <div className="relative">
-                <img
-                  src={avatarUrl}
-                  alt={userData.full_name}
-                  className="w-20 h-20 rounded-2xl shadow-lg border-2 border-white/30 object-cover"
-                />
-                <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-1 shadow-md">
-                  {stats.total > 0 ? (
-                    <span className="w-3 h-3 bg-emerald-500 rounded-full block animate-pulse"></span>
-                  ) : (
-                    <span className="w-3 h-3 bg-slate-300 rounded-full block"></span>
-                  )}
-                </div>
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-white">{userData.full_name || selectedUser}</h2>
-                <div className="flex items-center gap-3 mt-1 flex-wrap">
-                  <span className={`inline-block px-3 py-0.5 rounded-full text-xs font-medium text-white ${role.color}`}>
-                    {role.icon} {role.label}
-                  </span>
-                  <span className="text-white/60 text-sm">@{selectedUser}</span>
-                  {userData.whatsapp_number && userData.whatsapp_number !== 'N/A' && (
-                    <span className="text-white/60 text-sm flex items-center gap-1">
-                      <FaPhone className="text-xs" /> {userData.whatsapp_number}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Stats Grid */}
-          <div className="p-6 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-slate-100">
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl p-4 text-center border border-blue-200/50">
-              <p className="text-2xl font-bold text-blue-600">{stats.today}</p>
-              <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Today</p>
-            </div>
-            <div className="bg-gradient-to-br from-purple-50 to-purple-100/50 rounded-xl p-4 text-center border border-purple-200/50">
-              <p className="text-2xl font-bold text-purple-600">{stats.week}</p>
-              <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">This Week</p>
-            </div>
-            <div className="bg-gradient-to-br from-yellow-50 to-yellow-100/50 rounded-xl p-4 text-center border border-yellow-200/50">
-              <p className="text-2xl font-bold text-yellow-600">{stats.month}</p>
-              <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">This Month</p>
-            </div>
-            <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-xl p-4 text-center border border-emerald-200/50">
-              <p className="text-2xl font-bold text-emerald-600">{stats.total}</p>
-              <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">Total</p>
-            </div>
-          </div>
-
-          {/* Activity Breakdown */}
-          <div className="p-6 border-b border-slate-100">
-            <h3 className="text-sm font-semibold text-slate-700 mb-3">📊 Activity Breakdown</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-200/50">
-                <p className="text-lg font-bold text-emerald-600">{stats.created}</p>
-                <p className="text-[10px] text-slate-500 font-medium">Created</p>
-              </div>
-              <div className="bg-blue-50 rounded-xl p-3 text-center border border-blue-200/50">
-                <p className="text-lg font-bold text-blue-600">{stats.updated}</p>
-                <p className="text-[10px] text-slate-500 font-medium">Updated</p>
-              </div>
-              <div className="bg-rose-50 rounded-xl p-3 text-center border border-rose-200/50">
-                <p className="text-lg font-bold text-rose-600">{stats.deleted}</p>
-                <p className="text-[10px] text-slate-500 font-medium">Deleted</p>
-              </div>
-              <div className="bg-purple-50 rounded-xl p-3 text-center border border-purple-200/50">
-                <p className="text-lg font-bold text-purple-600">{stats.sent}</p>
-                <p className="text-[10px] text-slate-500 font-medium">Sent</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Activities */}
-          <div className="p-6">
-            <h3 className="text-sm font-semibold text-slate-700 mb-3">🕐 Recent Activities ({userActivities.length})</h3>
-            {recentActivities.length === 0 ? (
-              <p className="text-slate-400 text-sm text-center py-4">No activities found</p>
-            ) : (
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
-                {recentActivities.map((item) => {
-                  const type = getActivityType(item.activity);
-                  return (
-                    <div key={item.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition">
-                      <span className={`text-xs px-2 py-0.5 rounded-lg font-medium ${type.color}`}>
-                        {type.icon} {type.label}
-                      </span>
-                      <span className="text-sm text-slate-600 flex-1 truncate">{item.activity}</span>
-                      <span className="text-xs text-slate-400 whitespace-nowrap">{formatDate(item.created_at)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // User Card Component with Profile Pic
-  const UserCard = ({ user }) => {
-    const username = user.username;
-    const stats = getUserStats(username);
-    const role = getRoleBadge(user.role || 'employee');
-    const isActive = stats.total > 0;
-    const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.full_name || username)}&background=random&size=50&bold=true`;
-
-    return (
-      <div
-        onClick={() => openUserProfile(username)}
-        className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-xl hover:border-yellow-300 transition-all duration-300 cursor-pointer group"
-      >
-        <div className="flex items-start gap-3">
-          <div className="relative">
-            <img
-              src={avatarUrl}
-              alt={user.full_name}
-              className="w-12 h-12 rounded-xl shadow-md object-cover"
-            />
-            {isActive && (
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-white animate-pulse"></span>
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between">
-              <h4 className="font-semibold text-slate-800 truncate">
-                {user.full_name || user.username}
-              </h4>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full text-white ${role.color} ml-2`}>
-                {role.icon} {role.label}
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 truncate">@{user.username}</p>
-            <div className="flex items-center gap-3 mt-2">
-              <span className="text-xs font-medium text-slate-600">
-                📊 {stats.total}
-              </span>
-              <span className="text-xs text-slate-400">
-                📅 {stats.today} today
-              </span>
-              <span className="text-xs text-slate-400">
-                📆 {stats.week} this week
-              </span>
-            </div>
-          </div>
-          <FaEye className="text-slate-300 group-hover:text-indigo-500 transition text-sm mt-1 opacity-0 group-hover:opacity-100" />
-        </div>
-      </div>
-    );
+  const formatDateTime = (dateString) => {
+    if (!dateString) return '';
+    return new Date(dateString).toLocaleString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   return (
-    <div className="space-y-5 p-4 md:p-6">
-      {/* Header */}
-      <div className="relative overflow-hidden rounded-2xl p-6 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white shadow-xl">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2"></div>
-        <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-3xl shadow-lg">
-              👥
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">User Activity Tracker</h1>
-              <p className="text-white/70 text-sm">Monitor and track all user activities across the system</p>
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={loadData}
-              className="bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2"
-            >
-              <HiOutlineRefresh className="text-base" /> Refresh
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {stats.map((stat, index) => (
-          <div
-            key={index}
-            className={`${stat.bg} rounded-xl border border-white/50 shadow-sm p-3.5 hover:shadow-md transition-all hover:-translate-y-0.5`}
-          >
-            <div className="flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-lg bg-white/80 shadow-sm flex items-center justify-center ${stat.text}`}>
-                {stat.icon}
-              </div>
-              <div>
-                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">{stat.label}</p>
-                <p className={`text-lg font-bold ${stat.text}`}>{stat.value}</p>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div className="relative group">
-            <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs group-focus-within:text-yellow-500 transition" />
-            <input
-              type="text"
-              placeholder="Search by name or username..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 outline-none transition placeholder:text-slate-400"
-            />
-          </div>
-          <div className="relative group">
-            <FaUserTag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs group-focus-within:text-yellow-500 transition" />
-            <select
-              value={filterRole}
-              onChange={(e) => setFilterRole(e.target.value)}
-              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 outline-none appearance-none transition"
-            >
-              <option value="">All Roles</option>
-              <option value="admin">👑 Admin</option>
-              <option value="manager">📊 Manager</option>
-              <option value="employee">👤 Employee</option>
-            </select>
-          </div>
-          <div className="relative group">
-            <FaSortAmountDown className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs group-focus-within:text-yellow-500 transition" />
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 outline-none appearance-none transition"
-            >
-              <option value="count">Sort by Activity</option>
-              <option value="name">Sort by Name</option>
-            </select>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setSortOrder(sortOrder === "desc" ? "asc" : "desc")}
-              className="flex-1 bg-slate-100 hover:bg-slate-200 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 transition flex items-center justify-center gap-2"
-            >
-              {sortOrder === "desc" ? <FaSortAmountDown /> : <FaSortAmountUp />}
-              {sortOrder === "desc" ? "Desc" : "Asc"}
-            </button>
-            {(search || filterRole || sortBy !== "count" || sortOrder !== "desc") && (
-              <button
-                onClick={clearFilters}
-                className="px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-lg text-sm font-medium transition flex items-center gap-1"
-              >
-                <FaTimes className="text-xs" /> Clear
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* User Cards */}
-      {loading ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
-          <div className="inline-block h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-yellow-500"></div>
-          <p className="text-slate-400 text-sm mt-3">Loading users...</p>
-        </div>
-      ) : filteredUsers.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-16 text-center">
-          <div className="text-6xl mb-4">👥</div>
-          <p className="text-slate-600 font-medium text-lg">No users found</p>
-          <p className="text-slate-400 text-sm mt-1">Try adjusting your filters</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filteredUsers.map((user) => (
-            <UserCard key={user.id} user={user} />
-          ))}
+    <div className={`space-y-6 p-6 max-w-7xl mx-auto ${isDarkMode ? 'dark' : ''}`}>
+      {/* Message */}
+      {message.text && (
+        <div className={`p-4 rounded-xl mb-4 ${message.type === 'error' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-700' : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-700'}`}>
+          {message.text}
         </div>
       )}
 
+      {/* Header */}
+      <div className="flex flex-wrap justify-between items-center gap-4">
+        <div>
+          <h1 className="text-4xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+            <FaChartLine className="text-blue-500" /> Activity Log
+          </h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-2">Track user activity and performance</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={exportActivity}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition"
+          >
+            📥 Export
+          </button>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="bg-gray-200 dark:bg-slate-600 hover:bg-gray-300 dark:hover:bg-slate-500 px-4 py-2 rounded-lg transition dark:text-white disabled:opacity-50"
+          >
+            {loading ? '⏳ Loading...' : '🔄 Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 border-l-4 border-blue-500">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Total Activities</p>
+          <p className="text-2xl font-bold dark:text-white">{stats.totalActivities}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 border-l-4 border-green-500">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Active Users</p>
+          <p className="text-2xl font-bold text-green-600 dark:text-green-400">{stats.totalUsers}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 border-l-4 border-purple-500">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Avg per User</p>
+          <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{stats.avgPerUser}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 border-l-4 border-yellow-500">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Most Active</p>
+          <p className="text-xl font-bold text-yellow-600 dark:text-yellow-400 truncate">{stats.mostActiveUser || 'N/A'}</p>
+        </div>
+      </div>
+
+      {/* Activity Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 text-center border border-gray-200 dark:border-slate-700">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Today</p>
+          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{activityStats.today || 0}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 text-center border border-gray-200 dark:border-slate-700">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">This Week</p>
+          <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{activityStats.week || 0}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 text-center border border-gray-200 dark:border-slate-700">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">This Month</p>
+          <p className="text-2xl font-bold text-green-600 dark:text-green-400">{activityStats.month || 0}</p>
+        </div>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 text-center border border-gray-200 dark:border-slate-700">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Total</p>
+          <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{activityStats.total || 0}</p>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 border border-gray-200 dark:border-slate-700">
+        <div className="flex flex-wrap gap-3">
+          <div className="flex-1 min-w-[200px]">
+            <input
+              type="text"
+              placeholder="🔍 Search users..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full border border-gray-300 dark:border-slate-600 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:bg-slate-700 dark:text-white dark:placeholder-slate-400"
+            />
+          </div>
+          <select
+            value={filterRole}
+            onChange={(e) => setFilterRole(e.target.value)}
+            className="border border-gray-300 dark:border-slate-600 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:bg-slate-700 dark:text-white"
+          >
+            <option value="">All Roles</option>
+            <option value="admin">Admin</option>
+            <option value="developer">Developer</option>
+            <option value="team">Team Member</option>
+          </select>
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+            className="border border-gray-300 dark:border-slate-600 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:bg-slate-700 dark:text-white"
+          >
+            <option value="">All Activity Types</option>
+            {Array.isArray(activityTypes) && activityTypes.map((type, index) => (
+              <option key={index} value={type.type}>
+                {type.type} ({type.count})
+              </option>
+            ))}
+          </select>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="border border-gray-300 dark:border-slate-600 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:bg-slate-700 dark:text-white"
+          >
+            <option value="count">Sort by Activity</option>
+            <option value="name">Sort by Name</option>
+          </select>
+          <button
+            onClick={() => setSortOrder(sortOrder === "desc" ? "asc" : "desc")}
+            className="border border-gray-300 dark:border-slate-600 p-2 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition dark:text-white"
+          >
+            {sortOrder === "desc" ? <FaSortAmountDown /> : <FaSortAmountUp />}
+          </button>
+        </div>
+        {(filterType || filterDateFrom || filterDateTo) && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-500 dark:text-gray-400">Active Filters:</span>
+            {filterType && (
+              <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-1 rounded text-xs flex items-center gap-1">
+                Type: {filterType}
+                <button onClick={() => setFilterType("")} className="hover:text-red-500">✕</button>
+              </span>
+            )}
+            <button
+              onClick={() => {
+                setFilterType("");
+                setFilterDateFrom("");
+                setFilterDateTo("");
+              }}
+              className="text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+            >
+              Clear All
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* User Table */}
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow overflow-hidden border border-gray-200 dark:border-slate-700">
+        {loading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+              <p className="mt-4 text-gray-600 dark:text-gray-400">Loading activity data...</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 dark:bg-slate-700/50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">#</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">User</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Full Name</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Role</th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-600 dark:text-gray-400">Activities</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">WhatsApp</th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-600 dark:text-gray-400">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
+                  {paginatedUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="p-8 text-center text-gray-500 dark:text-gray-400">
+                        {search || filterRole || filterType ? 'No users match your filters' : 'No users found'}
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedUsers.map((user, index) => {
+                      const globalIndex = (currentPage - 1) * itemsPerPage + index + 1;
+                      const count = userActivityCounts[user.username] || 0;
+                      const details = userDetails[user.username] || {};
+                      const role = userRoles[user.username] || 'team';
+                      
+                      return (
+                        <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition">
+                          <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{globalIndex}</td>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-800 dark:text-white">
+                            @{user.username}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                            {details.full_name || user.username}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRoleBadge(role)} border`}>
+                              {role}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-3 py-1 rounded-full text-sm font-bold ${count > 0 ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500'}`}>
+                              {count}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                            {details.whatsapp_number || 'N/A'}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={() => {
+                                setSelectedUser(user);
+                                loadUserActivities(user.username);
+                                setShowProfileModal(true);
+                              }}
+                              className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm transition"
+                            >
+                              <FaEye className="inline mr-1" /> View
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex flex-wrap justify-between items-center p-4 border-t border-gray-200 dark:border-slate-700">
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Showing {(currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, filteredUsers.length)} of {filteredUsers.length} users
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed dark:text-white"
+                  >
+                    ← Prev
+                  </button>
+                  {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`px-3 py-1 border dark:border-slate-600 rounded-lg ${
+                          currentPage === pageNum
+                            ? 'bg-blue-500 text-white border-blue-500'
+                            : 'hover:bg-gray-50 dark:hover:bg-slate-700 dark:text-white'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed dark:text-white"
+                  >
+                    Next →
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                  <span>Show:</span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => {
+                      setItemsPerPage(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="border dark:border-slate-600 rounded-lg px-2 py-1 dark:bg-slate-700 dark:text-white"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* User Profile Modal */}
-      {showProfileModal && <UserProfileModal />}
+      {showProfileModal && selectedUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-lg max-w-md w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-gray-800 dark:text-white">👤 User Profile</h3>
+              <button
+                onClick={() => setShowProfileModal(false)}
+                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 text-xl"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 w-24">Username:</span>
+                <span className="text-sm text-gray-800 dark:text-white font-bold">@{selectedUser.username}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 w-24">Full Name:</span>
+                <span className="text-sm text-gray-800 dark:text-white">{userDetails[selectedUser.username]?.full_name || selectedUser.username}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 w-24">Role:</span>
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRoleBadge(userRoles[selectedUser.username] || 'team')}`}>
+                  {userRoles[selectedUser.username] || 'team'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 w-24">Activities:</span>
+                <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{userActivityCounts[selectedUser.username] || 0}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 w-24">WhatsApp:</span>
+                <span className="text-sm text-gray-600 dark:text-gray-300">{userDetails[selectedUser.username]?.whatsapp_number || 'N/A'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 w-24">Joined:</span>
+                <span className="text-sm text-gray-600 dark:text-gray-300">{formatDate(userDetails[selectedUser.username]?.created_at)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 w-24">Status:</span>
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${userDetails[selectedUser.username]?.is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                  {userDetails[selectedUser.username]?.is_active ? '🟢 Active' : '🔴 Inactive'}
+                </span>
+              </div>
+              
+              {/* Recent Activities */}
+              {selectedUserActivities.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-gray-200 dark:border-slate-700">
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">📋 Recent Activities</p>
+                  <div className="max-h-40 overflow-y-auto space-y-1">
+                    {selectedUserActivities.slice(0, 10).map((activity, idx) => {
+                      const type = activity.activity?.split(' ')[0] || 'Logged';
+                      return (
+                        <div key={idx} className="text-xs flex justify-between items-center py-1 border-b border-gray-100 dark:border-slate-700 last:border-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${getTypeBadge(type)}`}>
+                              {type}
+                            </span>
+                            <span className="text-gray-600 dark:text-gray-400">{activity.activity}</span>
+                          </div>
+                          <span className="text-gray-400 dark:text-gray-500 text-[10px]">{formatDateTime(activity.created_at)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

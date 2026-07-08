@@ -29,8 +29,8 @@ router.get("/trips", async (req, res) => {
         const [rows] = await db.query(`
             SELECT yt.*, ym.yatra_name, ym.rate_per_seat
             FROM yatra_trips yt
-            JOIN yatra_master ym ON yt.yatra_id = ym.id
-            ORDER BY yt.id DESC
+            LEFT JOIN yatra_master ym ON yt.yatra_id = ym.id
+            ORDER BY yt.start_date ASC
         `);
         res.json(rows);
     } catch (err) {
@@ -41,17 +41,18 @@ router.get("/trips", async (req, res) => {
 
 /*
 =========================
-GET SINGLE YATRA TRIP WITH CUSTOMERS AND SEATS
+GET SINGLE TRIP WITH CUSTOMERS AND SEATS
 =========================
 */
 router.get("/trips/:id", async (req, res) => {
     const { id } = req.params;
 
     try {
+        // Get trip details
         const [tripRows] = await db.query(`
             SELECT yt.*, ym.yatra_name, ym.rate_per_seat
             FROM yatra_trips yt
-            JOIN yatra_master ym ON yt.yatra_id = ym.id
+            LEFT JOIN yatra_master ym ON yt.yatra_id = ym.id
             WHERE yt.id = ?
         `, [id]);
 
@@ -59,98 +60,119 @@ router.get("/trips/:id", async (req, res) => {
             return res.status(404).json({ message: "Trip not found" });
         }
 
-        const trip = tripRows[0];
-
-        const [customers] = await db.query(`
-            SELECT ytc.*,
-            (SELECT COUNT(*) FROM yatra_trip_travelers WHERE yatra_trip_customer_id = ytc.id) as traveler_count
+        // Get customers with travelers and extras
+        const [customerRows] = await db.query(`
+            SELECT 
+                ytc.*,
+                GROUP_CONCAT(DISTINCT CONCAT(
+                    ytt.traveler_name, '|', 
+                    ytt.phone, '|', 
+                    ytt.age, '|', 
+                    ytt.gender, '|', 
+                    ytt.relation
+                )) as travelers_raw,
+                GROUP_CONCAT(DISTINCT CONCAT(
+                    ytce.expense_name, '|', 
+                    ytce.expense_amount
+                )) as extras_raw
             FROM yatra_trip_customers ytc
+            LEFT JOIN yatra_trip_travelers ytt ON ytc.id = ytt.yatra_trip_customer_id
+            LEFT JOIN yatra_trip_customer_extras ytce ON ytc.id = ytce.yatra_trip_customer_id
             WHERE ytc.yatra_trip_id = ?
-            ORDER BY ytc.id
+            GROUP BY ytc.id
         `, [id]);
 
-        const customerIds = customers.map(c => c.id);
+        // Parse travelers and extras
+        const customers = customerRows.map(customer => {
+            const travelers = customer.travelers_raw ? customer.travelers_raw.split(',').map(t => {
+                const parts = t.split('|');
+                return {
+                    traveler_name: parts[0] || '',
+                    phone: parts[1] || '',
+                    age: parts[2] || null,
+                    gender: parts[3] || 'Male',
+                    relation: parts[4] || 'Self'
+                };
+            }) : [];
 
-        let travelers = [];
-        let extras = [];
-        let seats = [];
+            const extra_expenses = customer.extras_raw ? customer.extras_raw.split(',').map(e => {
+                const parts = e.split('|');
+                return {
+                    expense_name: parts[0] || '',
+                    expense_amount: parseFloat(parts[1]) || 0
+                };
+            }) : [];
 
-        if (customerIds.length > 0) {
-            [travelers] = await db.query(
-                `SELECT * FROM yatra_trip_travelers
-                 WHERE yatra_trip_customer_id IN (?)
-                 ORDER BY yatra_trip_customer_id, id`,
-                [customerIds]
-            );
-
-            [extras] = await db.query(
-                `SELECT * FROM yatra_trip_customer_extras
-                 WHERE yatra_trip_customer_id IN (?)
-                 ORDER BY yatra_trip_customer_id, id`,
-                [customerIds]
-            );
-        }
-
-        [seats] = await db.query(
-            `SELECT * FROM yatra_trip_seats
-             WHERE yatra_trip_id = ?
-             ORDER BY seat_number`,
-            [id]
-        );
-
-        const customersWithData = customers.map(customer => {
             return {
                 ...customer,
-                travelers: travelers.filter(t => t.yatra_trip_customer_id === customer.id),
-                extra_expenses: extras.filter(e => e.yatra_trip_customer_id === customer.id),
-                seat_numbers: customer.seat_numbers ? customer.seat_numbers.split(',').map(Number) : []
+                travelers: travelers,
+                extra_expenses: extra_expenses,
+                seat_numbers: customer.seat_numbers ? customer.seat_numbers.split(',').map(s => parseInt(s.trim())) : []
             };
         });
 
-        res.json({
-            ...trip,
-            customers: customersWithData,
-            seats: seats || []
-        });
+        // Get seats for this trip
+        const [seatRows] = await db.query(`
+            SELECT 
+                s.seat_number,
+                s.is_booked,
+                s.customer_trip_id,
+                c.customer_name
+            FROM yatra_trip_seats s
+            LEFT JOIN yatra_trip_customers c ON s.customer_trip_id = c.id
+            WHERE s.yatra_trip_id = ?
+            ORDER BY s.seat_number
+        `, [id]);
+
+        const trip = {
+            ...tripRows[0],
+            customers: customers || [],
+            seats: seatRows || []
+        };
+
+        res.json(trip);
     } catch (err) {
-        console.error("Error fetching trip details:", err);
+        console.error("Error fetching trip:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
 /*
 =========================
-CREATE YATRA TRIP (with seats)
+CREATE TRIP
 =========================
 */
 router.post("/trips", async (req, res) => {
-    const { yatra_id, trip_name, start_date, end_date, total_seats } = req.body;
+    const { yatra_id, trip_name, start_date, end_date, total_seats, status } = req.body;
+
+    if (!yatra_id || !trip_name || !start_date || !end_date || !total_seats) {
+        return res.status(400).json({ error: "All fields are required" });
+    }
 
     try {
         const [result] = await db.query(
-            `INSERT INTO yatra_trips (yatra_id, trip_name, start_date, end_date, total_seats)
-             VALUES (?, ?, ?, ?, ?)`,
-            [yatra_id, trip_name, start_date, end_date, total_seats]
+            `INSERT INTO yatra_trips 
+             (yatra_id, trip_name, start_date, end_date, total_seats, status) 
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [yatra_id, trip_name, start_date, end_date, total_seats, status || 'active']
         );
 
         const tripId = result.insertId;
 
-        if (total_seats > 0) {
-            const seatValues = [];
-            for (let i = 1; i <= total_seats; i++) {
-                seatValues.push([tripId, i]);
-            }
-
-            await db.query(
-                `INSERT INTO yatra_trip_seats (yatra_trip_id, seat_number) VALUES ?`,
-                [seatValues]
-            );
+        // Create seats
+        const seatValues = [];
+        for (let i = 1; i <= total_seats; i++) {
+            seatValues.push(`(${tripId}, ${i}, 0, NULL)`);
         }
+        
+        await db.query(
+            `INSERT INTO yatra_trip_seats (yatra_trip_id, seat_number, is_booked, customer_trip_id) VALUES ${seatValues.join(', ')}`
+        );
 
         res.status(201).json({
             success: true,
             id: tripId,
-            message: "Trip created successfully with seats"
+            message: "Trip created successfully"
         });
     } catch (err) {
         console.error("Error creating trip:", err);
@@ -160,7 +182,7 @@ router.post("/trips", async (req, res) => {
 
 /*
 =========================
-UPDATE YATRA TRIP
+UPDATE TRIP
 =========================
 */
 router.put("/trips/:id", async (req, res) => {
@@ -168,36 +190,12 @@ router.put("/trips/:id", async (req, res) => {
     const { trip_name, start_date, end_date, total_seats, status } = req.body;
 
     try {
-        const [existing] = await db.query(
-            "SELECT total_seats FROM yatra_trips WHERE id = ?",
-            [id]
-        );
-
-        if (existing.length === 0) {
-            return res.status(404).json({ message: "Trip not found" });
-        }
-
-        const oldSeats = existing[0].total_seats || 0;
-
         await db.query(
             `UPDATE yatra_trips
              SET trip_name = ?, start_date = ?, end_date = ?, total_seats = ?, status = ?
              WHERE id = ?`,
             [trip_name, start_date, end_date, total_seats, status || 'active', id]
         );
-
-        if (total_seats > oldSeats) {
-            const seatValues = [];
-            for (let i = oldSeats + 1; i <= total_seats; i++) {
-                seatValues.push([id, i]);
-            }
-            if (seatValues.length > 0) {
-                await db.query(
-                    `INSERT INTO yatra_trip_seats (yatra_trip_id, seat_number) VALUES ?`,
-                    [seatValues]
-                );
-            }
-        }
 
         res.json({
             success: true,
@@ -211,21 +209,18 @@ router.put("/trips/:id", async (req, res) => {
 
 /*
 =========================
-DELETE YATRA TRIP
+DELETE TRIP
 =========================
 */
 router.delete("/trips/:id", async (req, res) => {
     const { id } = req.params;
 
     try {
-        const [result] = await db.query(
-            "DELETE FROM yatra_trips WHERE id = ?",
-            [id]
-        );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: "Trip not found" });
-        }
+        await db.query("DELETE FROM yatra_trip_customer_extras WHERE yatra_trip_customer_id IN (SELECT id FROM yatra_trip_customers WHERE yatra_trip_id = ?)", [id]);
+        await db.query("DELETE FROM yatra_trip_travelers WHERE yatra_trip_customer_id IN (SELECT id FROM yatra_trip_customers WHERE yatra_trip_id = ?)", [id]);
+        await db.query("DELETE FROM yatra_trip_seats WHERE yatra_trip_id = ?", [id]);
+        await db.query("DELETE FROM yatra_trip_customers WHERE yatra_trip_id = ?", [id]);
+        await db.query("DELETE FROM yatra_trips WHERE id = ?", [id]);
 
         res.json({
             success: true,
@@ -239,7 +234,7 @@ router.delete("/trips/:id", async (req, res) => {
 
 /*
 =========================
-ADD CUSTOMER TO TRIP (with seat assignment)
+ADD CUSTOMER TO TRIP
 =========================
 */
 router.post("/trips/:tripId/customers", async (req, res) => {
@@ -262,92 +257,83 @@ router.post("/trips/:tripId/customers", async (req, res) => {
         payment_mode,
         remarks,
         travelers,
-        extra_expenses
+        extra_expenses,
+        discount,
+        discount_given_by
     } = req.body;
 
-    const assignedSeats = selected_seats || [];
-
-    if (assignedSeats.length !== total_seats) {
-        return res.status(400).json({
-            error: `Please select exactly ${total_seats} seats`
-        });
-    }
-
     try {
-        const seatNumbersStr = assignedSeats.join(',');
-
+        // Insert customer into trip
+        const seatNumbersStr = selected_seats ? selected_seats.join(',') : '';
+        
         const [result] = await db.query(
-            `INSERT INTO yatra_trip_customers
-             (yatra_trip_id, customer_id, customer_name, phone, location, pickup_point, total_seats, seat_numbers,
-              base_amount, total_amount, advance_amount, balance_amount,
-              advance_collected_by, advance_collected_date, referral_id,
-              payment_mode, remarks)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                tripId, customer_id || null, customer_name, phone, location || null, pickup_point || null,
-                total_seats, seatNumbersStr,
-                base_amount, total_amount, advance_amount, balance_amount,
-                advance_collected_by, advance_collected_date || null, referral_id || null,
-                payment_mode || 'Cash', remarks
-            ]
+            `INSERT INTO yatra_trip_customers 
+             (yatra_trip_id, customer_id, customer_name, phone, location, pickup_point, 
+              total_seats, seat_numbers, base_amount, total_amount, advance_amount, balance_amount,
+              advance_collected_by, advance_collected_date, referral_id, payment_mode, remarks, discount, discount_given_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [tripId, customer_id, customer_name, phone, location, pickup_point,
+             total_seats, seatNumbersStr, base_amount, total_amount, advance_amount, balance_amount,
+             advance_collected_by, advance_collected_date, referral_id, payment_mode, remarks, discount, discount_given_by]
         );
 
         const customerTripId = result.insertId;
 
-        if (assignedSeats.length > 0) {
-            for (const seatNum of assignedSeats) {
+        // Insert travelers
+        if (travelers && travelers.length > 0) {
+            for (const traveler of travelers) {
                 await db.query(
-                    `UPDATE yatra_trip_seats 
-                     SET is_booked = TRUE, customer_id = ?, customer_trip_id = ?, traveler_name = ?
-                     WHERE yatra_trip_id = ? AND seat_number = ?`,
-                    [customer_id || null, customerTripId, customer_name, tripId, seatNum]
+                    `INSERT INTO yatra_trip_travelers 
+                     (yatra_trip_customer_id, traveler_name, phone, age, gender, relation)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [customerTripId, traveler.traveler_name, traveler.phone, 
+                     traveler.age, traveler.gender, traveler.relation]
                 );
             }
         }
 
+        // Insert extra expenses
         if (extra_expenses && extra_expenses.length > 0) {
-            const expenseValues = extra_expenses.map(e => [
-                customerTripId,
-                e.name,
-                e.amount
-            ]);
-            await db.query(
-                `INSERT INTO yatra_trip_customer_extras
-                 (yatra_trip_customer_id, expense_name, expense_amount) VALUES ?`,
-                [expenseValues]
-            );
+            for (const expense of extra_expenses) {
+                await db.query(
+                    `INSERT INTO yatra_trip_customer_extras 
+                     (yatra_trip_customer_id, expense_name, expense_amount)
+                     VALUES (?, ?, ?)`,
+                    [customerTripId, expense.expense_name, expense.expense_amount]
+                );
+            }
         }
 
-        if (travelers && travelers.length > 0) {
-            const travelerValues = travelers.map(t => [
-                customerTripId,
-                t.traveler_name,
-                t.phone || phone || 'N/A',
-                t.age || null,
-                t.gender || 'Male',
-                t.relation || 'Self'
-            ]);
-            await db.query(
-                `INSERT INTO yatra_trip_travelers
-                 (yatra_trip_customer_id, traveler_name, phone, age, gender, relation) VALUES ?`,
-                [travelerValues]
-            );
+        // Update seats
+        if (selected_seats && selected_seats.length > 0) {
+            for (const seatNumber of selected_seats) {
+                await db.query(
+                    `UPDATE yatra_trip_seats 
+                     SET is_booked = 1, customer_trip_id = ? 
+                     WHERE yatra_trip_id = ? AND seat_number = ?`,
+                    [customerTripId, tripId, seatNumber]
+                );
+            }
         }
 
-        // Update booked_seats count in yatra_trips
+        // Update booked seats count
         await db.query(
-            `UPDATE yatra_trips SET booked_seats = booked_seats + ? WHERE id = ?`,
-            [total_seats, tripId]
+            `UPDATE yatra_trips 
+             SET booked_seats = (
+                 SELECT COUNT(*) FROM yatra_trip_seats 
+                 WHERE yatra_trip_id = ? AND is_booked = 1
+             )
+             WHERE id = ?`,
+            [tripId, tripId]
         );
 
         res.status(201).json({
             success: true,
             id: customerTripId,
-            assignedSeats: assignedSeats,
-            message: `Customer added successfully. Seats: ${assignedSeats.join(', ')}`
+            message: "Customer added to trip successfully"
         });
     } catch (err) {
-        console.error("Error adding customer:", err);
+        console.error("Error adding customer to trip:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -365,6 +351,7 @@ router.put("/trips/:tripId/customers/:customerTripId", async (req, res) => {
         location,
         pickup_point,
         total_seats,
+        selected_seats,
         base_amount,
         total_amount,
         advance_amount,
@@ -375,134 +362,109 @@ router.put("/trips/:tripId/customers/:customerTripId", async (req, res) => {
         payment_mode,
         remarks,
         travelers,
-        extra_expenses
+        extra_expenses,
+        discount,
+        discount_given_by
     } = req.body;
 
     try {
-        const [existing] = await db.query(
-            "SELECT total_seats, seat_numbers, customer_id FROM yatra_trip_customers WHERE id = ?",
-            [customerTripId]
-        );
-
-        if (existing.length === 0) {
-            return res.status(404).json({ message: "Customer not found" });
-        }
-
-        const oldSeats = existing[0].total_seats || 0;
-        const oldSeatNumbers = existing[0].seat_numbers ? existing[0].seat_numbers.split(',').map(Number) : [];
-        const customerId = existing[0].customer_id;
-        const seatDiff = total_seats - oldSeats;
-
-        let finalSeatNumbers = oldSeatNumbers;
-
-        if (seatDiff > 0) {
-            // Need more seats - find available seats
-            const [availableSeats] = await db.query(
-                `SELECT seat_number FROM yatra_trip_seats
-                 WHERE yatra_trip_id = ? AND is_booked = FALSE
-                 ORDER BY seat_number LIMIT ?`,
-                [tripId, seatDiff]
-            );
-
-            if (availableSeats.length < seatDiff) {
-                return res.status(400).json({ error: "Not enough available seats" });
-            }
-
-            const newSeats = availableSeats.map(s => s.seat_number);
-            finalSeatNumbers = [...oldSeatNumbers, ...newSeats];
-
-            // Mark new seats as booked
-            for (const seatNum of newSeats) {
-                await db.query(
-                    `UPDATE yatra_trip_seats 
-                     SET is_booked = TRUE, customer_id = ?, customer_trip_id = ?, traveler_name = ?
-                     WHERE yatra_trip_id = ? AND seat_number = ?`,
-                    [customerId || null, customerTripId, customer_name, tripId, seatNum]
-                );
-            }
-        } else if (seatDiff < 0) {
-            // Remove seats
-            const seatsToRemove = oldSeatNumbers.slice(seatDiff);
-            finalSeatNumbers = oldSeatNumbers.slice(0, oldSeatNumbers.length + seatDiff);
-
-            for (const seatNum of seatsToRemove) {
-                await db.query(
-                    `UPDATE yatra_trip_seats 
-                     SET is_booked = FALSE, customer_id = NULL, customer_trip_id = NULL, traveler_name = NULL
-                     WHERE yatra_trip_id = ? AND seat_number = ?`,
-                    [tripId, seatNum]
-                );
-            }
-        }
-
-        const seatNumbersStr = finalSeatNumbers.join(',');
+        const seatNumbersStr = selected_seats ? selected_seats.join(',') : '';
 
         // Update customer
         await db.query(
-            `UPDATE yatra_trip_customers
-             SET customer_name = ?, phone = ?, location = ?, pickup_point = ?,
-                 total_seats = ?, seat_numbers = ?, base_amount = ?, total_amount = ?,
-                 advance_amount = ?, balance_amount = ?, advance_collected_by = ?,
-                 advance_collected_date = ?, referral_id = ?, payment_mode = ?, remarks = ?
+            `UPDATE yatra_trip_customers SET
+                customer_name = ?,
+                phone = ?,
+                location = ?,
+                pickup_point = ?,
+                total_seats = ?,
+                seat_numbers = ?,
+                base_amount = ?,
+                total_amount = ?,
+                advance_amount = ?,
+                balance_amount = ?,
+                advance_collected_by = ?,
+                advance_collected_date = ?,
+                referral_id = ?,
+                payment_mode = ?,
+                remarks = ?,
+                discount = ?,
+                discount_given_by = ?
              WHERE id = ? AND yatra_trip_id = ?`,
-            [
-                customer_name, phone, location || null, pickup_point || null,
-                total_seats, seatNumbersStr,
-                base_amount, total_amount, advance_amount, balance_amount,
-                advance_collected_by, advance_collected_date || null, referral_id || null,
-                payment_mode || 'Cash', remarks,
-                customerTripId, tripId
-            ]
+            [customer_name, phone, location, pickup_point, total_seats, seatNumbersStr,
+             base_amount, total_amount, advance_amount, balance_amount,
+             advance_collected_by, advance_collected_date, referral_id,
+             payment_mode, remarks, discount, discount_given_by,
+             customerTripId, tripId]
         );
 
-        // Update travelers
+        // Delete existing travelers
         await db.query(
             "DELETE FROM yatra_trip_travelers WHERE yatra_trip_customer_id = ?",
             [customerTripId]
         );
 
+        // Insert new travelers
+        if (travelers && travelers.length > 0) {
+            for (const traveler of travelers) {
+                await db.query(
+                    `INSERT INTO yatra_trip_travelers 
+                     (yatra_trip_customer_id, traveler_name, phone, age, gender, relation)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [customerTripId, traveler.traveler_name, traveler.phone, 
+                     traveler.age, traveler.gender, traveler.relation]
+                );
+            }
+        }
+
+        // Delete existing extra expenses
         await db.query(
             "DELETE FROM yatra_trip_customer_extras WHERE yatra_trip_customer_id = ?",
             [customerTripId]
         );
 
+        // Insert new extra expenses
         if (extra_expenses && extra_expenses.length > 0) {
-            const expenseValues = extra_expenses.map(e => [
-                customerTripId,
-                e.name,
-                e.amount
-            ]);
-            await db.query(
-                `INSERT INTO yatra_trip_customer_extras
-                 (yatra_trip_customer_id, expense_name, expense_amount) VALUES ?`,
-                [expenseValues]
-            );
+            for (const expense of extra_expenses) {
+                await db.query(
+                    `INSERT INTO yatra_trip_customer_extras 
+                     (yatra_trip_customer_id, expense_name, expense_amount)
+                     VALUES (?, ?, ?)`,
+                    [customerTripId, expense.expense_name, expense.expense_amount]
+                );
+            }
         }
 
-        if (travelers && travelers.length > 0) {
-            const travelerValues = travelers.map(t => [
-                customerTripId,
-                t.traveler_name,
-                t.phone || phone || 'N/A',
-                t.age || null,
-                t.gender || 'Male',
-                t.relation || 'Self'
-            ]);
-            await db.query(
-                `INSERT INTO yatra_trip_travelers
-                 (yatra_trip_customer_id, traveler_name, phone, age, gender, relation) VALUES ?`,
-                [travelerValues]
-            );
+        // Free up old seats
+        await db.query(
+            `UPDATE yatra_trip_seats 
+             SET is_booked = 0, customer_trip_id = NULL 
+             WHERE customer_trip_id = ? AND yatra_trip_id = ?`,
+            [customerTripId, tripId]
+        );
+
+        // Assign new seats
+        if (selected_seats && selected_seats.length > 0) {
+            for (const seatNumber of selected_seats) {
+                await db.query(
+                    `UPDATE yatra_trip_seats 
+                     SET is_booked = 1, customer_trip_id = ? 
+                     WHERE yatra_trip_id = ? AND seat_number = ?`,
+                    [customerTripId, tripId, seatNumber]
+                );
+            }
         }
 
-        // Update booked_seats count in yatra_trips
-        const seatDiffTotal = total_seats - oldSeats;
-        if (seatDiffTotal !== 0) {
-            await db.query(
-                `UPDATE yatra_trips SET booked_seats = booked_seats + ? WHERE id = ?`,
-                [seatDiffTotal, tripId]
-            );
-        }
+        // Update booked seats count
+        await db.query(
+            `UPDATE yatra_trips 
+             SET booked_seats = (
+                 SELECT COUNT(*) FROM yatra_trip_seats 
+                 WHERE yatra_trip_id = ? AND is_booked = 1
+             )
+             WHERE id = ?`,
+            [tripId, tripId]
+        );
 
         res.json({
             success: true,
@@ -523,37 +485,41 @@ router.delete("/trips/:tripId/customers/:customerTripId", async (req, res) => {
     const { tripId, customerTripId } = req.params;
 
     try {
-        const [existing] = await db.query(
-            "SELECT total_seats, seat_numbers FROM yatra_trip_customers WHERE id = ?",
-            [customerTripId]
-        );
-
-        if (existing.length === 0) {
-            return res.status(404).json({ message: "Customer not found" });
-        }
-
-        const seatNumbers = existing[0].seat_numbers ? existing[0].seat_numbers.split(',').map(Number) : [];
-        const totalSeats = existing[0].total_seats || 0;
-
         // Free up seats
-        for (const seatNum of seatNumbers) {
-            await db.query(
-                `UPDATE yatra_trip_seats 
-                 SET is_booked = FALSE, customer_id = NULL, customer_trip_id = NULL, traveler_name = NULL
-                 WHERE yatra_trip_id = ? AND seat_number = ?`,
-                [tripId, seatNum]
-            );
-        }
-
         await db.query(
-            "DELETE FROM yatra_trip_customers WHERE id = ?",
+            `UPDATE yatra_trip_seats 
+             SET is_booked = 0, customer_trip_id = NULL 
+             WHERE customer_trip_id = ? AND yatra_trip_id = ?`,
+            [customerTripId, tripId]
+        );
+
+        // Delete travelers
+        await db.query(
+            "DELETE FROM yatra_trip_travelers WHERE yatra_trip_customer_id = ?",
             [customerTripId]
         );
 
-        // Update booked_seats count
+        // Delete extra expenses
         await db.query(
-            `UPDATE yatra_trips SET booked_seats = booked_seats - ? WHERE id = ?`,
-            [totalSeats, tripId]
+            "DELETE FROM yatra_trip_customer_extras WHERE yatra_trip_customer_id = ?",
+            [customerTripId]
+        );
+
+        // Delete customer
+        await db.query(
+            "DELETE FROM yatra_trip_customers WHERE id = ? AND yatra_trip_id = ?",
+            [customerTripId, tripId]
+        );
+
+        // Update booked seats count
+        await db.query(
+            `UPDATE yatra_trips 
+             SET booked_seats = (
+                 SELECT COUNT(*) FROM yatra_trip_seats 
+                 WHERE yatra_trip_id = ? AND is_booked = 1
+             )
+             WHERE id = ?`,
+            [tripId, tripId]
         );
 
         res.json({
@@ -568,63 +534,37 @@ router.delete("/trips/:tripId/customers/:customerTripId", async (req, res) => {
 
 /*
 =========================
-FIX EXISTING CUSTOMERS - ASSIGN SEAT NUMBERS
+GET CUSTOMER BOOKING HISTORY
 =========================
 */
-router.post("/fix-seat-numbers/:tripId", async (req, res) => {
-    const { tripId } = req.params;
+router.get("/customer-history/:customerId", async (req, res) => {
+    const { customerId } = req.params;
 
     try {
-        // Get all customers for this trip that don't have seat numbers
-        const [customers] = await db.query(
-            "SELECT id, customer_name, total_seats FROM yatra_trip_customers WHERE yatra_trip_id = ? AND (seat_numbers IS NULL OR seat_numbers = '')",
-            [tripId]
-        );
+        const [rows] = await db.query(`
+            SELECT 
+                ytc.*,
+                yt.trip_name,
+                yt.start_date,
+                yt.end_date,
+                yt.status as trip_status,
+                ym.yatra_name
+            FROM yatra_trip_customers ytc
+            LEFT JOIN yatra_trips yt ON ytc.yatra_trip_id = yt.id
+            LEFT JOIN yatra_master ym ON yt.yatra_id = ym.id
+            WHERE ytc.customer_id = ?
+            ORDER BY yt.start_date DESC
+        `, [customerId]);
 
-        if (customers.length === 0) {
-            return res.json({ message: "No customers need fixing", fixed: 0 });
-        }
+        // Parse seat numbers for each booking
+        const history = rows.map(row => ({
+            ...row,
+            seat_numbers: row.seat_numbers ? row.seat_numbers.split(',').map(s => parseInt(s.trim())) : []
+        }));
 
-        let fixed = 0;
-        let seatIndex = 1;
-
-        for (const customer of customers) {
-            const totalSeats = customer.total_seats || 1;
-            const seatNumbers = [];
-            
-            for (let i = 0; i < totalSeats; i++) {
-                seatNumbers.push(seatIndex + i);
-            }
-            seatIndex += totalSeats;
-
-            const seatNumbersStr = seatNumbers.join(',');
-
-            await db.query(
-                "UPDATE yatra_trip_customers SET seat_numbers = ? WHERE id = ?",
-                [seatNumbersStr, customer.id]
-            );
-
-            // Mark seats as booked
-            const seatNumArray = seatNumbers;
-            for (const seatNum of seatNumArray) {
-                await db.query(
-                    `UPDATE yatra_trip_seats 
-                     SET is_booked = TRUE, customer_id = NULL, customer_trip_id = ?, traveler_name = ?
-                     WHERE yatra_trip_id = ? AND seat_number = ?`,
-                    [customer.id, customer.customer_name, tripId, seatNum]
-                );
-            }
-
-            fixed++;
-        }
-
-        res.json({
-            success: true,
-            message: `Fixed ${fixed} customers`,
-            fixed: fixed
-        });
+        res.json(history);
     } catch (err) {
-        console.error("Error fixing seat numbers:", err);
+        console.error("Error fetching customer history:", err);
         res.status(500).json({ error: err.message });
     }
 });

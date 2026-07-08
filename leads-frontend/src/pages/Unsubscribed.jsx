@@ -5,7 +5,7 @@ function Unsubscribed() {
     <CustomerGroupPage
       title="Unsubscribed Customers"
       description="Customers who have unsubscribed from messages"
-      groupType="unsubscribed"
+      groupType="Unsubscribed"
       color="gray"
       moveToGroup="Daily Reach"
       moveToLabel="Reactivate to Daily Reach"

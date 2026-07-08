@@ -1,65 +1,49 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const mysql = require('mysql2/promise');
+const db = require("../config/db");
 
-const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'gmc_leads',
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-});
-
-// Check if WhatsApp number exists
-router.post('/check-number', async (req, res) => {
-    const { whatsapp_number } = req.body;
+// ===== GET MESSAGE LOGS =====
+router.get("/logs", async (req, res) => {
+    const { limit = 50 } = req.query;
     try {
-        const [rows] = await pool.query(
-            'SELECT * FROM whatsapp_sessions WHERE whatsapp_number = ?',
-            [whatsapp_number]
-        );
-        if (rows.length > 0) {
-            res.json({ 
-                exists: true, 
-                member_name: rows[0].member_name,
-                whatsapp_number: rows[0].whatsapp_number
-            });
-        } else {
-            res.json({ exists: false });
-        }
-    } catch (error) {
-        console.error('Error checking number:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Save member name for WhatsApp number
-router.post('/save-member', async (req, res) => {
-    const { whatsapp_number, member_name, session_id } = req.body;
-    try {
-        await pool.query(
-            'INSERT INTO whatsapp_sessions (session_id, whatsapp_number, member_name, is_verified) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE member_name = ?, is_verified = 1',
-            [session_id, whatsapp_number, member_name, member_name]
-        );
-        res.json({ success: true, message: 'Member saved successfully!' });
-    } catch (error) {
-        console.error('Error saving member:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Get all WhatsApp sessions
-router.get('/sessions', async (req, res) => {
-    try {
-        const [rows] = await pool.query(
-            'SELECT * FROM whatsapp_sessions ORDER BY created_at DESC'
+        const [rows] = await db.query(
+            `SELECT * FROM broadcast_logs 
+             ORDER BY created_at DESC 
+             LIMIT ?`,
+            [parseInt(limit)]
         );
         res.json(rows);
-    } catch (error) {
-        console.error('Error getting sessions:', error);
-        res.status(500).json({ error: error.message });
+    } catch (err) {
+        console.error("Error fetching message logs:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ===== SEND SINGLE MESSAGE =====
+router.post("/send", async (req, res) => {
+    const { phone, message, team_member } = req.body;
+    
+    if (!phone || !message) {
+        return res.status(400).json({ error: "Phone and message are required" });
+    }
+    
+    try {
+        // Log the message
+        await db.query(
+            `INSERT INTO broadcast_logs 
+             (team_member, recipient, message, status, message_parts) 
+             VALUES (?, ?, ?, 'Sent', ?)`,
+            [team_member || 'Manual', phone, message, 'Single']
+        );
+        
+        res.json({ 
+            success: true, 
+            message: "Message logged successfully",
+            recipient: phone
+        });
+    } catch (err) {
+        console.error("Error sending message:", err);
+        res.status(500).json({ error: err.message });
     }
 });
 

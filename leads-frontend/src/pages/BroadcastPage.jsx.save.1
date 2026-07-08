@@ -1,0 +1,710 @@
+        } catch (error) {
+            console.error('Error previewing:', error);
+            showMessage('Failed to preview customers', 'error');
+        }
+    };
+
+    // ===== SEND MANUAL (FIXED) =====
+    const handleSendManual = async () => {
+        const messageText = getMessageText();
+        
+        if (!messageText) {
+            showMessage('Please select a template, preset, or enter a custom message', 'error');
+            return;
+        }
+
+        const member = teamMembers.find(m => m.name === selectedMember);
+        if (!member) {
+            showMessage('Please select a valid member', 'error');
+            return;
+        }
+
+        if (!member.isConnected) {
+            showMessage(`⚠️ ${member.name} is not connected to WhatsApp!`, 'error');
+            return;
+        }
+
+        const remaining = member.dailyLimit - member.todaySent;
+        if (remaining <= 0) {
+            showMessage(`⚠️ ${member.name} has reached daily limit of ${member.dailyLimit} messages!`, 'error');
+            return;
+        }
+        if (previewCount > remaining) {
+            showMessage(`⚠️ Only ${remaining} messages remaining today. Please select fewer customers.`, 'error');
+            return;
+        }
+
+        if (!window.confirm(`Send broadcast to ${previewCount} customers as ${member.name}?`)) return;
+
+        setLoading(true);
+        try {
+            const payload = {
+                target_group: targetGroup,
+                interests: selectedInterests,
+                yatra: selectedYatra,
+                message: messageText,
+                team_member: member.name
+            };
+            const response = await api.post('/broadcast/send', payload);
+            showMessage(`✅ ${response.data.sent || previewCount} messages sent by ${member.name}!`, 'success');
+            loadMessageLogs();
+            
+            // Update member today sent
+            const sentCount = response.data.sent || previewCount;
+            setTeamMembers(prev => prev.map(m => 
+                m.name === member.name 
+                    ? { ...m, todaySent: m.todaySent + sentCount }
+                    : m
+            ));
+            
+            setPreviewCount(0);
+            setPreviewCustomers([]);
+            setShowPreview(false);
+        } catch (error) {
+            console.error('Error sending broadcast:', error);
+            showMessage('Failed to send broadcast: ' + (error.response?.data?.error || error.message), 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ===== AUTO-SEND TO ALL MEMBERS (FIXED) =====
+    const handleAutoSend = async () => {
+        const messageText = getMessageText();
+        
+        if (!messageText) {
+            showMessage('Please select a template, preset, or enter a custom message', 'error');
+            return;
+        }
+
+        const connectedMembers = teamMembers.filter(m => m.isConnected && m.todaySent < m.dailyLimit);
+        if (connectedMembers.length === 0) {
+            showMessage('No connected members available to send messages!', 'error');
+            return;
+        }
+
+        // Get customers
+        const payload = {
+            target_group: targetGroup,
+            interests: selectedInterests,
+            yatra: selectedYatra
+        };
+        const response = await api.post('/broadcast/preview', payload);
+        const customers = response.data.customers || [];
+        
+        if (customers.length === 0) {
+            showMessage('No customers found for the selected criteria', 'error');
+            return;
+        }
+
+        if (!window.confirm(`Auto-send to ${customers.length} customers across ${connectedMembers.length} members?`)) return;
+
+        setLoading(true);
+        try {
+            // Distribute customers evenly among connected members
+            const totalAvailable = connectedMembers.reduce((sum, m) => sum + (m.dailyLimit - m.todaySent), 0);
+            if (customers.length > totalAvailable) {
+                showMessage(`⚠️ Only ${totalAvailable} messages available today. Sending to ${totalAvailable} customers.`, 'info');
+            }
+
+            const assignments = {};
+            connectedMembers.forEach(m => { assignments[m.name] = []; });
+
+            // Round-robin assignment
+            let memberIndex = 0;
+            for (const customer of customers) {
+                const member = connectedMembers[memberIndex % connectedMembers.length];
+                const remaining = member.dailyLimit - member.todaySent - assignments[member.name].length;
+                if (remaining > 0) {
+                    assignments[member.name].push(customer);
+                }
+                memberIndex++;
+            }
+
+            let totalSent = 0;
+            for (const member of connectedMembers) {
+                const assignedCustomers = assignments[member.name] || [];
+                if (assignedCustomers.length === 0) continue;
+
+                for (const customer of assignedCustomers) {
+                    if (customer.mobile_number) {
+                        await api.post('/whatsapp/send', {
+                            phone: customer.mobile_number,
+                            message: messageText,
+                            team_member: member.name
+                        });
+                        totalSent++;
+                    }
+                }
+            }
+
+            showMessage(`✅ ${totalSent} messages sent across ${connectedMembers.length} members!`, 'success');
+            loadMessageLogs();
+            
+            setTeamMembers(prev => prev.map(m => {
+                const sent = assignments[m.name]?.length || 0;
+                return { ...m, todaySent: m.todaySent + sent };
+            }));
+            
+            setPreviewCount(0);
+            setPreviewCustomers([]);
+            setShowPreview(false);
+        } catch (error) {
+            console.error('Error auto-sending:', error);
+            showMessage('Failed to auto-send: ' + (error.response?.data?.error || error.message), 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const showMessage = (text, type = "success") => {
+        setMessage({ text, type });
+        setTimeout(() => setMessage({ text: "", type: "" }), 3000);
+    };
+
+    const formatDate = (dateString) => {
+        if (!dateString) return '';
+        return new Date(dateString).toLocaleString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    };
+
+    // ===== EXPORT LOGS =====
+    const exportLogs = () => {
+        if (messageLogs.length === 0) {
+            showMessage('No logs to export', 'error');
+            return;
+        }
+
+        const headers = ['#', 'Member', 'Recipient', 'Message', 'Status', 'Date'];
+        const rows = messageLogs.map((log, index) => [
+            index + 1,
+            log.team_member || 'Unknown',
+            log.recipient || 'N/A',
+            log.message || 'N/A',
+            log.status || 'Sent',
+            new Date(log.created_at).toLocaleString()
+        ]);
+
+        let csv = headers.join(',') + '\n';
+        rows.forEach(row => {
+            csv += row.join(',') + '\n';
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `broadcast_logs_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        showMessage('📥 Logs exported successfully!', 'success');
+    };
+
+    // ===== RENDER =====
+    return (
+        <div className="p-6 max-w-7xl mx-auto">
+            {/* Message */}
+            {message.text && (
+                <div className={`p-4 rounded-xl mb-4 ${
+                    message.type === 'error' ? 'bg-red-100 text-red-700 border border-red-200' :
+                    message.type === 'info' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                    'bg-green-100 text-green-700 border border-green-200'
+                }`}>
+                    {message.text}
+                </div>
+            )}
+
+            {/* Stats Dashboard */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
+                    <p className="text-xs text-gray-500 uppercase">Connected Members</p>
+                    <p className="text-2xl font-bold">{stats.connectedMembers}/4</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-500">
+                    <p className="text-xs text-gray-500 uppercase">Total Messages</p>
+                    <p className="text-2xl font-bold text-green-600">{stats.totalMessages}</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-yellow-500">
+                    <p className="text-xs text-gray-500 uppercase">Today Sent</p>
+                    <p className="text-2xl font-bold text-yellow-600">{stats.todaySent}</p>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4 border-l-4 border-red-500">
+                    <p className="text-xs text-gray-500 uppercase">Daily Limit</p>
+                    <p className="text-2xl font-bold text-red-600">{stats.dailyLimit}</p>
+                </div>
+            </div>
+
+            {/* Team Members */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                {teamMembers.map((member) => (
+                    <div 
+                        key={member.id} 
+                        className={`bg-white rounded-lg shadow p-4 border-2 ${member.name === selectedMember ? 'border-blue-500' : 'border-gray-200'}`}
+                        onClick={() => {
+                            setSelectedMember(member.name);
+                            setMemberTodaySent(member.todaySent);
+                        }}
+                        style={{ cursor: 'pointer' }}
+                    >
+                        <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                    <p className="text-sm font-medium text-gray-800">{member.name}</p>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleEditMember(member);
+                                        }}
+                                        className="text-xs text-blue-500 hover:text-blue-700"
+                                    >
+                                        ✏️
+                                    </button>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${member.isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                        {member.isConnected ? '🟢 Online' : '🔴 Offline'}
+                                    </span>
+                                    {member.whatsappNumber && (
+                                        <span className="text-xs text-gray-400">📱 {member.whatsappNumber}</span>
+                                    )}
+                                </div>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${member.todaySent >= member.dailyLimit ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                {member.todaySent}/{member.dailyLimit}
+                            </span>
+                        </div>
+                        <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                            <div 
+                                className={`h-1.5 rounded-full ${member.todaySent >= member.dailyLimit ? 'bg-red-500' : 'bg-blue-500'}`}
+                                style={{ width: `${Math.min((member.todaySent / member.dailyLimit) * 100, 100)}%` }}
+                            ></div>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">
+                            {member.dailyLimit - member.todaySent} remaining
+                        </p>
+                        
+                        {qrCodes[member.name] && !member.isConnected && (
+                            <div className="mt-3 p-2 bg-gray-50 rounded-lg text-center">
+                                <img 
+                                    src={qrCodes[member.name]} 
+                                    alt={`${member.name} QR`} 
+                                    className="mx-auto w-32 h-32 border border-gray-200 rounded-lg"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">Scan to connect {member.name}</p>
+                            </div>
+                        )}
+                        
+                        <div className="mt-3 flex gap-2">
+                            {!member.isConnected && !qrCodes[member.name] && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleLoginMember(member.name);
+                                    }}
+                                    className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs transition flex-1"
+                                >
+                                    🔌 Connect
+                                </button>
+                            )}
+                            {!member.isConnected && qrCodes[member.name] && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleLoginMember(member.name);
+                                    }}
+                                    className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-xs transition flex-1"
+                                >
+                                    🔄 Refresh QR
+                                </button>
+                            )}
+                            {member.isConnected && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleLogoutMember(member.name);
+                                    }}
+                                    className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-xs transition flex-1"
+                                >
+                                    🚪 Logout
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Broadcast Form */}
+            <div className="bg-white rounded-lg shadow p-6 mb-6 border border-gray-200">
+                <h2 className="text-xl font-bold text-gray-800 mb-4">📤 Send Broadcast</h2>
+                
+                <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Select Team Member</label>
+                        <select
+                            value={selectedMember}
+                            onChange={(e) => {
+                                setSelectedMember(e.target.value);
+                                const member = teamMembers.find(m => m.name === e.target.value);
+                                if (member) {
+                                    setMemberTodaySent(member.todaySent);
+                                }
+                            }}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        >
+                            {teamMembers.map((member) => (
+                                <option key={member.id} value={member.name}>
+                                    {member.name} ({member.isConnected ? '🟢 Connected' : '🔴 Offline'} | {member.dailyLimit - member.todaySent} remaining)
+                                </option>
+                            ))}
+                        </select>
+                        {!teamMembers.find(m => m.name === selectedMember)?.isConnected && (
+                            <p className="text-xs text-red-500 mt-1">⚠️ Selected member is not connected</p>
+                        )}
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Target Group</label>
+                        <select
+                            value={targetGroup}
+                            onChange={(e) => setTargetGroup(e.target.value)}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="Daily Reach">Daily Reach</option>
+                            <option value="Do Not Reach">Do Not Reach</option>
+                            <option value="Unsubscribed">Unsubscribed</option>
+                            <option value="All">All Customers</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Interest Filter</label>
+                        <select
+                            value={selectedInterests[0] || ''}
+                            onChange={(e) => setSelectedInterests(e.target.value ? [e.target.value] : [])}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">All Interests</option>
+                            {interests.map((interest) => (
+                                <option key={interest.id} value={interest.interest_name}>
+                                    {interest.interest_name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Yatra Filter</label>
+                        <select
+                            value={selectedYatra}
+                            onChange={(e) => setSelectedYatra(e.target.value)}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">All Yatras</option>
+                            {yatras.map((yatra) => (
+                                <option key={yatra.id} value={yatra.yatra_name}>
+                                    {yatra.yatra_name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {/* Message Section */}
+                <div className="mt-4 grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
+                        <select
+                            value={selectedTemplate}
+                            onChange={(e) => {
+                                setSelectedTemplate(e.target.value);
+                                setSelectedPreset('');
+                                const template = templates.find(t => t.id === parseInt(e.target.value));
+                                if (template) {
+                                    showMessage(`📝 Template loaded: ${template.template_name}`, 'info');
+                                }
+                            }}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Select a template...</option>
+                            {templates.map((template) => (
+                                <option key={template.id} value={template.id}>
+                                    {template.template_name} {template.interest_name ? `(${template.interest_name})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-gray-400 mt-1">📌 Template has highest priority</p>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Preset Messages</label>
+                        <select
+                            value={selectedPreset}
+                            onChange={(e) => {
+                                setSelectedPreset(e.target.value);
+                                setSelectedTemplate('');
+                                const preset = presetMessages.find(p => p.id === parseInt(e.target.value));
+                                if (preset) {
+                                    showMessage(`📝 Preset loaded: ${preset.name}`, 'info');
+                                }
+                            }}
+                            className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Select a preset...</option>
+                            {presetMessages.map((preset) => (
+                                <option key={preset.id} value={preset.id}>
+                                    {preset.name}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-gray-400 mt-1">📌 Preset has lowest priority</p>
+                    </div>
+                </div>
+
+                <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom Message</label>
+                    <textarea
+                        value={customMessage}
+                        onChange={(e) => {
+                            setCustomMessage(e.target.value);
+                            if (e.target.value.trim()) {
+                                // Don't clear template/preset, let user choose priority
+                            }
+                        }}
+                        className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        rows="4"
+                        placeholder="Enter your custom message..."
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                        {customMessage.length} characters
+                        {selectedTemplate && ' 📌 Template will override this'}
+                        {selectedPreset && ' 📌 Preset will NOT override this (template takes priority)'}
+                    </p>
+                </div>
+
+                {/* Message Preview */}
+                {getMessageText() && (
+                    <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <p className="text-xs font-medium text-blue-700 mb-1">📝 Message Preview:</p>
+                        <p className="text-sm text-gray-700">{getMessageText()}</p>
+                        {selectedTemplate && <p className="text-xs text-blue-600 mt-1">✅ Using Template</p>}
+                        {!selectedTemplate && customMessage.trim() && !selectedPreset && <p className="text-xs text-green-600 mt-1">✅ Using Custom Message</p>}
+                        {!selectedTemplate && !customMessage.trim() && selectedPreset && <p className="text-xs text-purple-600 mt-1">✅ Using Preset</p>}
+                    </div>
+                )}
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                        onClick={handlePreview}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition"
+                    >
+                        🔍 Preview
+                    </button>
+                    <button
+                        onClick={handleSendManual}
+                        disabled={loading || previewCount === 0 || !teamMembers.find(m => m.name === selectedMember)?.isConnected}
+                        className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                    >
+                        {loading ? '⏳ Sending...' : `📤 Manual Send (${previewCount})`}
+                    </button>
+                    <button
+                        onClick={handleAutoSend}
+                        disabled={loading || previewCount === 0 || !teamMembers.some(m => m.isConnected)}
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+                    >
+                        🤖 Auto-Send to All Members
+                    </button>
+                    {!teamMembers.some(m => m.isConnected) && (
+                        <span className="text-sm text-red-500 self-center">⚠️ No members connected</span>
+                    )}
+                    {teamMembers.find(m => m.name === selectedMember)?.isConnected && (
+                        <span className="text-sm text-green-500 self-center">✅ {selectedMember} connected</span>
+                    )}
+                </div>
+            </div>
+
+            {/* Preview */}
+            {showPreview && (
+                <div className="bg-gray-50 rounded-lg shadow p-4 mb-6 border border-gray-200">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-gray-800">📊 Preview ({previewCount} customers)</h3>
+                        <div className="flex gap-2">
+                            <span className="text-sm text-gray-500">
+                                {selectedMember}: {memberTodaySent}/{teamMembers.find(m => m.name === selectedMember)?.dailyLimit || 250}
+                            </span>
+                            <button
+                                onClick={() => setShowPreview(false)}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                    {previewCustomers.length === 0 ? (
+                        <p className="text-gray-500 text-center py-4">No customers match the criteria</p>
+                    ) : (
+                        <div className="max-h-60 overflow-y-auto">
+                            <table className="w-full text-sm">
+                                <thead className="bg-gray-100 sticky top-0">
+                                    <tr>
+                                        <th className="px-3 py-1 text-left">#</th>
+                                        <th className="px-3 py-1 text-left">Name</th>
+                                        <th className="px-3 py-1 text-left">Phone</th>
+                                        <th className="px-3 py-1 text-left">Group</th>
+                                        <th className="px-3 py-1 text-left">Interest</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200">
+                                    {previewCustomers.slice(0, 20).map((customer, index) => (
+                                        <tr key={customer.id || index}>
+                                            <td className="px-3 py-1">{index + 1}</td>
+                                            <td className="px-3 py-1">{customer.customer_name || 'Unknown'}</td>
+                                            <td className="px-3 py-1">{customer.mobile_number}</td>
+                                            <td className="px-3 py-1">
+                                                <span className={`px-2 py-0.5 rounded-full text-xs ${customer.group_type === 'Daily Reach' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                    {customer.group_type || 'Daily Reach'}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-1 text-xs truncate max-w-xs">{customer.interests || 'None'}</td>
+                                        </tr>
+                                    ))}
+                                    {previewCustomers.length > 20 && (
+                                        <tr>
+                                            <td colSpan="5" className="px-3 py-2 text-center text-gray-500">
+                                                ... and {previewCustomers.length - 20} more
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Edit Member Modal */}
+            {showEditMember && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg max-w-md w-full p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">✏️ Edit Member Name</h3>
+                            <button
+                                onClick={() => {
+                                    setShowEditMember(false);
+                                    setEditingMember(null);
+                                    setEditMemberName('');
+                                    setEditMemberId(null);
+                                }}
+                                className="text-gray-500 hover:text-gray-700 text-xl"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Member Name</label>
+                                <input
+                                    type="text"
+                                    value={editMemberName}
+                                    onChange={(e) => setEditMemberName(e.target.value)}
+                                    className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    placeholder="Enter member name..."
+                                />
+                            </div>
+                        </div>
+                        <div className="mt-6 flex gap-3">
+                            <button
+                                onClick={handleSaveMemberName}
+                                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition"
+                            >
+                                💾 Save
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowEditMember(false);
+                                    setEditingMember(null);
+                                    setEditMemberName('');
+                                    setEditMemberId(null);
+                                }}
+                                className="bg-gray-300 hover:bg-gray-400 px-6 py-2 rounded-lg transition"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Recent Broadcasts */}
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+                <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+                    <h2 className="font-bold text-gray-800">📜 Recent Broadcasts</h2>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={exportLogs}
+                            className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm transition"
+                        >
+                            📥 Export
+                        </button>
+                        <button
+                            onClick={() => {
+                                loadMessageLogs();
+                            }}
+                            className="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm transition"
+                        >
+                            🔄 Refresh
+                        </button>
+                    </div>
+                </div>
+                {messageLogs.length === 0 ? (
+                    <div className="p-8 text-center text-gray-500">
+                        No broadcast logs yet
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table className="w-full">
+                            <thead className="bg-gray-50 sticky top-0">
+                                <tr>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">#</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Member</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Recipient</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Message</th>
+                                    <th className="px-4 py-2 text-center text-sm font-medium text-gray-600">Status</th>
+                                    <th className="px-4 py-2 text-left text-sm font-medium text-gray-600">Date</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                                {messageLogs.slice(0, 50).map((log, index) => (
+                                    <tr key={log.id || index} className="hover:bg-gray-50">
+                                        <td className="px-4 py-2 text-sm text-gray-500">{index + 1}</td>
+                                        <td className="px-4 py-2 text-sm font-medium text-gray-800">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs ${
+                                                log.team_member === 'Deepanshu' ? 'bg-purple-100 text-purple-700' :
+                                                log.team_member === 'Sanjeev' ? 'bg-blue-100 text-blue-700' :
+                                                log.team_member === 'Rajeev' ? 'bg-green-100 text-green-700' :
+                                                log.team_member === 'Muskan' ? 'bg-pink-100 text-pink-700' :
+                                                'bg-gray-100 text-gray-700'
+                                            }`}>
+                                                {log.team_member || 'Unknown'}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-gray-600">{log.recipient || 'N/A'}</td>
+                                        <td className="px-4 py-2 text-sm text-gray-600 max-w-xs truncate">{log.message || 'N/A'}</td>
+                                        <td className="px-4 py-2 text-center">
+                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${log.status === 'Sent' ? 'bg-green-100 text-green-700' : log.status === 'Failed' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                                {log.status || 'Sent'}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-2 text-sm text-gray-500">{formatDate(log.created_at)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default BroadcastPage;

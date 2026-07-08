@@ -4,17 +4,82 @@ const db = require("../config/db");
 
 /*
 =========================
-GET ALL CAMPAIGNS
+GET ALL CAMPAIGNS (with search, filter & limit)
 =========================
 */
 router.get("/", async (req, res) => {
+    const { search, status, limit } = req.query;
+
     try {
-        const [rows] = await db.query(
-            "SELECT * FROM campaigns ORDER BY id DESC"
-        );
+        let query = "SELECT * FROM campaigns";
+        let conditions = [];
+        let params = [];
+
+        if (search) {
+            conditions.push("(campaign_name LIKE ? OR message LIKE ?)");
+            params.push(`%${search}%`, `%${search}%`);
+        }
+
+        if (status) {
+            conditions.push("status = ?");
+            params.push(status);
+        }
+
+        if (conditions.length > 0) {
+            query += " WHERE " + conditions.join(" AND ");
+        }
+
+        query += " ORDER BY id DESC";
+
+        if (limit) {
+            query += " LIMIT ?";
+            params.push(parseInt(limit));
+        }
+
+        const [rows] = await db.query(query, params);
         res.json(rows);
     } catch (err) {
         console.error("Error fetching campaigns:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
+GET CAMPAIGN ANALYTICS
+=========================
+*/
+router.get("/:id/analytics", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const [campaign] = await db.query(
+            "SELECT * FROM campaigns WHERE id = ?",
+            [id]
+        );
+
+        if (campaign.length === 0) {
+            return res.status(404).json({ error: "Campaign not found" });
+        }
+
+        const [analytics] = await db.query(
+            `SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
+                SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
+                SUM(CASE WHEN responded_at IS NOT NULL THEN 1 ELSE 0 END) as responded,
+                SUM(CASE WHEN converted_at IS NOT NULL THEN 1 ELSE 0 END) as converted
+             FROM campaign_analytics 
+             WHERE campaign_id = ?`,
+            [id]
+        );
+
+        res.json({
+            campaign: campaign[0],
+            analytics: analytics[0] || { total: 0, sent: 0, opened: 0, responded: 0, converted: 0 }
+        });
+    } catch (err) {
+        console.error("Error fetching campaign analytics:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -25,7 +90,15 @@ CREATE CAMPAIGN
 =========================
 */
 router.post("/", async (req, res) => {
-    const { campaign_name, message, template_id, target_interests, target_groups, status } = req.body;
+    const { 
+        campaign_name, 
+        message, 
+        template_id, 
+        target_interests, 
+        target_groups, 
+        status,
+        scheduled_at 
+    } = req.body;
 
     if (!campaign_name || !message) {
         return res.status(400).json({ error: "Campaign name and message are required" });
@@ -34,9 +107,17 @@ router.post("/", async (req, res) => {
     try {
         const [result] = await db.query(
             `INSERT INTO campaigns 
-             (campaign_name, message, template_id, target_interests, target_groups, status)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [campaign_name, message, template_id || null, target_interests || null, target_groups || 'Daily Reach', status || 'Draft']
+             (campaign_name, message, template_id, target_interests, target_groups, status, scheduled_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+                campaign_name, 
+                message, 
+                template_id || null, 
+                target_interests || null, 
+                target_groups || 'Daily Reach', 
+                status || 'Draft',
+                scheduled_at || null
+            ]
         );
 
         res.status(201).json({
@@ -57,14 +138,31 @@ UPDATE CAMPAIGN
 */
 router.put("/:id", async (req, res) => {
     const { id } = req.params;
-    const { campaign_name, message, template_id, target_interests, target_groups, status } = req.body;
+    const { 
+        campaign_name, 
+        message, 
+        template_id, 
+        target_interests, 
+        target_groups, 
+        status,
+        scheduled_at 
+    } = req.body;
 
     try {
         const [result] = await db.query(
             `UPDATE campaigns 
-             SET campaign_name = ?, message = ?, template_id = ?, target_interests = ?, target_groups = ?, status = ?
+             SET campaign_name = ?, message = ?, template_id = ?, target_interests = ?, target_groups = ?, status = ?, scheduled_at = ?
              WHERE id = ?`,
-            [campaign_name, message, template_id || null, target_interests || null, target_groups || 'Daily Reach', status || 'Draft', id]
+            [
+                campaign_name, 
+                message, 
+                template_id || null, 
+                target_interests || null, 
+                target_groups || 'Daily Reach', 
+                status || 'Draft',
+                scheduled_at || null,
+                id
+            ]
         );
 
         if (result.affectedRows === 0) {
@@ -83,28 +181,94 @@ router.put("/:id", async (req, res) => {
 
 /*
 =========================
-DELETE CAMPAIGN
+DUPLICATE CAMPAIGN
 =========================
 */
-router.delete("/:id", async (req, res) => {
+router.post("/:id/duplicate", async (req, res) => {
     const { id } = req.params;
 
     try {
-        const [result] = await db.query(
-            "DELETE FROM campaigns WHERE id = ?",
+        const [campaign] = await db.query(
+            "SELECT * FROM campaigns WHERE id = ?",
             [id]
         );
 
-        if (result.affectedRows === 0) {
+        if (campaign.length === 0) {
             return res.status(404).json({ error: "Campaign not found" });
         }
 
+        const orig = campaign[0];
+        const [result] = await db.query(
+            `INSERT INTO campaigns 
+             (campaign_name, message, template_id, target_interests, target_groups, status)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+                `${orig.campaign_name} (Copy)`,
+                orig.message,
+                orig.template_id,
+                orig.target_interests,
+                orig.target_groups,
+                'Draft'
+            ]
+        );
+
         res.json({
             success: true,
-            message: "Campaign deleted successfully"
+            id: result.insertId,
+            message: "Campaign duplicated successfully"
         });
     } catch (err) {
-        console.error("Error deleting campaign:", err);
+        console.error("Error duplicating campaign:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
+GET AUDIENCE PREVIEW
+=========================
+*/
+router.post("/:id/audience-preview", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const [campaign] = await db.query(
+            "SELECT * FROM campaigns WHERE id = ?",
+            [id]
+        );
+
+        if (campaign.length === 0) {
+            return res.status(404).json({ error: "Campaign not found" });
+        }
+
+        const campaignData = campaign[0];
+        let query = `
+            SELECT id, customer_name, mobile_number, interests, location_type 
+            FROM customers 
+            WHERE 1=1
+        `;
+        let params = [];
+
+        if (campaignData.target_groups) {
+            query += ` AND group_type = ?`;
+            params.push(campaignData.target_groups);
+        }
+
+        if (campaignData.target_interests) {
+            const interests = campaignData.target_interests.split(', ').filter(Boolean);
+            const interestConditions = interests.map(() => `interests LIKE ?`).join(' OR ');
+            query += ` AND (${interestConditions})`;
+            interests.forEach(i => params.push(`%${i}%`));
+        }
+
+        const [recipients] = await db.query(query, params);
+
+        res.json({
+            total: recipients.length,
+            preview: recipients.slice(0, 10)
+        });
+    } catch (err) {
+        console.error("Error getting audience preview:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -128,34 +292,41 @@ router.post("/:id/send", async (req, res) => {
         }
 
         const campaignData = campaign[0];
-
-        // Get recipients based on target_groups and target_interests
         let query = `
             SELECT id, customer_name, mobile_number 
             FROM customers 
             WHERE 1=1
         `;
+        let params = [];
 
         if (campaignData.target_groups) {
-            query += ` AND group_type = '${campaignData.target_groups}'`;
+            query += ` AND group_type = ?`;
+            params.push(campaignData.target_groups);
         }
 
         if (campaignData.target_interests) {
-            const interests = campaignData.target_interests.split(',').map(i => i.trim());
-            const interestConditions = interests.map(i => {
-                return `interests LIKE '%${i.replace(/'/g, "''")}%'`;
-            }).join(' OR ');
+            const interests = campaignData.target_interests.split(', ').filter(Boolean);
+            const interestConditions = interests.map(() => `interests LIKE ?`).join(' OR ');
             query += ` AND (${interestConditions})`;
+            interests.forEach(i => params.push(`%${i}%`));
         }
 
-        const [recipients] = await db.query(query);
+        const [recipients] = await db.query(query, params);
 
-        // Update campaign with recipient count and sent time
+        // Insert into campaign_analytics
+        if (recipients.length > 0) {
+            const values = recipients.map(r => [id, r.id]);
+            await db.query(
+                `INSERT INTO campaign_analytics (campaign_id, customer_id) VALUES ?`,
+                [values]
+            );
+        }
+
         await db.query(
             `UPDATE campaigns 
-             SET total_recipients = ?, sent_at = NOW(), status = 'Sent'
+             SET total_recipients = ?, sent_count = ?, sent_at = NOW(), status = 'Sent'
              WHERE id = ?`,
-            [recipients.length, id]
+            [recipients.length, recipients.length, id]
         );
 
         res.json({
@@ -165,6 +336,33 @@ router.post("/:id/send", async (req, res) => {
         });
     } catch (err) {
         console.error("Error sending campaign:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+========================= DELETE CAMPAIGN
+=========================
+*/
+router.delete("/:id", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const [result] = await db.query(
+            "DELETE FROM campaigns WHERE id = ?",
+            [id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Campaign not found" });
+        }
+
+        res.json({
+            success: true,
+            message: "Campaign deleted successfully"
+        });
+    } catch (err) {
+        console.error("Error deleting campaign:", err);
         res.status(500).json({ error: err.message });
     }
 });

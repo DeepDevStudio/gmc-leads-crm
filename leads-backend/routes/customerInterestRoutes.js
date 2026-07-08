@@ -4,89 +4,111 @@ const db = require("../config/db");
 
 /*
 =========================
-GET ALL INTERESTS FOR A CUSTOMER
+GET CUSTOMER INTERESTS
 =========================
 */
-router.get("/:customerId/interests", (req, res) => {
-  const { customerId } = req.params;
+router.get("/:customerId", async (req, res) => {
+    const { customerId } = req.params;
 
-  db.query(
-    `
-    SELECT i.id, i.interest_name, i.created_at
-    FROM customer_interests ci
-    JOIN interests i ON ci.interest_id = i.id
-    WHERE ci.customer_id = ?
-    ORDER BY i.interest_name
-    `,
-    [customerId],
-    (err, results) => {
-      if (err) {
-        return res.status(500).json(err);
-      }
-      res.json(results);
+    try {
+        const [rows] = await db.query(`
+            SELECT ci.*, i.interest_name
+            FROM customer_interests ci
+            LEFT JOIN interests i ON ci.interest_id = i.id
+            WHERE ci.customer_id = ?
+            ORDER BY i.interest_name
+        `, [customerId]);
+
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching customer interests:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
 });
 
 /*
 =========================
-ADD INTEREST TO CUSTOMER
+ADD CUSTOMER INTEREST
 =========================
 */
-router.post("/:customerId/interests", (req, res) => {
-  const { customerId } = req.params;
-  const { interest_id } = req.body;
+router.post("/", async (req, res) => {
+    const { customer_id, interest_name } = req.body;
 
-  if (!interest_id) {
-    return res.status(400).json({ error: "interest_id is required" });
-  }
-
-  db.query(
-    `
-    INSERT IGNORE INTO customer_interests (customer_id, interest_id)
-    VALUES (?, ?)
-    `,
-    [customerId, interest_id],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json(err);
-      }
-      res.status(201).json({
-        success: true,
-        message: "Interest added to customer successfully",
-        affected: result.affectedRows,
-      });
+    if (!customer_id || !interest_name) {
+        return res.status(400).json({ error: "Customer ID and interest name are required" });
     }
-  );
+
+    try {
+        // Check if interest exists
+        let [interestRows] = await db.query(
+            "SELECT id FROM interests WHERE interest_name = ?",
+            [interest_name]
+        );
+
+        let interestId;
+        if (interestRows.length === 0) {
+            // Create interest if it doesn't exist
+            const [result] = await db.query(
+                "INSERT INTO interests (interest_name) VALUES (?)",
+                [interest_name]
+            );
+            interestId = result.insertId;
+        } else {
+            interestId = interestRows[0].id;
+        }
+
+        // Check if already assigned
+        const [existing] = await db.query(
+            "SELECT id FROM customer_interests WHERE customer_id = ? AND interest_id = ?",
+            [customer_id, interestId]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({ error: "Interest already assigned to customer" });
+        }
+
+        const [result] = await db.query(
+            "INSERT INTO customer_interests (customer_id, interest_id) VALUES (?, ?)",
+            [customer_id, interestId]
+        );
+
+        res.status(201).json({
+            success: true,
+            id: result.insertId,
+            message: "Interest added to customer successfully"
+        });
+    } catch (err) {
+        console.error("Error adding customer interest:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /*
 =========================
-REMOVE INTEREST FROM CUSTOMER
+REMOVE CUSTOMER INTEREST
 =========================
 */
-router.delete("/:customerId/interests/:interestId", (req, res) => {
-  const { customerId, interestId } = req.params;
+router.delete("/:id", async (req, res) => {
+    const { id } = req.params;
 
-  db.query(
-    `
-    DELETE FROM customer_interests
-    WHERE customer_id = ? AND interest_id = ?
-    `,
-    [customerId, interestId],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json(err);
-      }
-      if (result.affectedRows === 0) {
-        return res.status(404).json({ error: "Customer interest not found" });
-      }
-      res.json({
-        success: true,
-        message: "Interest removed from customer successfully",
-      });
+    try {
+        const [result] = await db.query(
+            "DELETE FROM customer_interests WHERE id = ?",
+            [id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Customer interest not found" });
+        }
+
+        res.json({
+            success: true,
+            message: "Interest removed from customer successfully"
+        });
+    } catch (err) {
+        console.error("Error removing customer interest:", err);
+        res.status(500).json({ error: err.message });
     }
-  );
 });
 
 module.exports = router;

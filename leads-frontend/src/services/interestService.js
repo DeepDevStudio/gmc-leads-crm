@@ -1,33 +1,64 @@
-import axios from "axios";
+import api from "./api";
 
-const API = "/api/interests";
-
-// Get all interests
+// ===== GET ALL INTERESTS =====
 export const getInterests = async () => {
-    const response = await axios.get(API);
-    return response.data;
+    try {
+        const response = await api.get('/interests');
+        // API returns { data: [...], pagination: {...} }
+        // Extract the data array
+        if (response.data && Array.isArray(response.data.data)) {
+            return response.data.data;
+        }
+        if (Array.isArray(response.data)) {
+            return response.data;
+        }
+        return [];
+    } catch (error) {
+        console.error("Error fetching interests:", error);
+        return [];
+    }
 };
 
-// Get single interest by ID
-export const getInterest = async (id) => {
-    const response = await axios.get(`${API}/${id}`);
-    return response.data;
+// ===== GET INTEREST CATEGORIES =====
+export const getInterestCategories = async () => {
+    try {
+        const response = await api.get('/interests/categories');
+        return Array.isArray(response.data) ? response.data : [];
+    } catch (error) {
+        console.error("Error fetching interest categories:", error);
+        return [];
+    }
 };
 
-// Create new interest
+// ===== CREATE INTEREST =====
 export const createInterest = async (data) => {
-    const response = await axios.post(API, data);
-    return response.data;
+    try {
+        const response = await api.post('/interests', data);
+        return response.data;
+    } catch (error) {
+        console.error("Error creating interest:", error);
+        throw error;
+    }
 };
 
-// Update interest by ID
+// ===== UPDATE INTEREST =====
 export const updateInterest = async (id, data) => {
-    const response = await axios.put(`${API}/${id}`, data);
-    return response.data;
+    try {
+        const response = await api.put(`/interests/${id}`, data);
+        return response.data;
+    } catch (error) {
+        console.error("Error updating interest:", error);
+        throw error;
+    }
 };
 
-// Delete interest by ID
+// ===== DELETE INTEREST =====
 export const deleteInterest = async (id) => {
-    const response = await axios.delete(`${API}/${id}`);
-    return response.data;
+    try {
+        const response = await api.delete(`/interests/${id}`);
+        return response.data;
+    } catch (error) {
+        console.error("Error deleting interest:", error);
+        throw error;
+    }
 };

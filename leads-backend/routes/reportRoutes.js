@@ -4,24 +4,42 @@ const db = require("../config/db");
 
 /*
 =========================
-GET REPORT DATA
+GET REPORT DATA (with date filters)
 =========================
 */
 router.get("/", async (req, res) => {
+    const { date_from, date_to } = req.query;
+
     try {
-        // Total customers
+        let dateCondition = "";
+        let params = [];
+
+        if (date_from && date_to) {
+            dateCondition = " AND created_at BETWEEN ? AND ?";
+            params.push(date_from, date_to + " 23:59:59");
+        } else if (date_from) {
+            dateCondition = " AND created_at >= ?";
+            params.push(date_from);
+        } else if (date_to) {
+            dateCondition = " AND created_at <= ?";
+            params.push(date_to + " 23:59:59");
+        }
+
         const [totalCustomers] = await db.query("SELECT COUNT(*) as total FROM customers");
-        
-        // Total yatras
         const [totalYatras] = await db.query("SELECT COUNT(*) as total FROM yatra_master");
         
-        // Total bookings
-        const [totalBookings] = await db.query("SELECT COUNT(*) as total FROM yatra_trip_customers");
+        let bookingQuery = "SELECT COUNT(*) as total FROM yatra_trip_customers";
+        if (dateCondition) {
+            bookingQuery += " WHERE 1=1" + dateCondition;
+        }
+        const [totalBookings] = await db.query(bookingQuery, params);
         
-        // Total revenue
-        const [totalRevenue] = await db.query("SELECT SUM(total_amount) as total FROM yatra_trip_customers");
+        let revenueQuery = "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers";
+        if (dateCondition) {
+            revenueQuery += " WHERE 1=1" + dateCondition;
+        }
+        const [totalRevenue] = await db.query(revenueQuery, params);
         
-        // Recent activity
         const [recentActivity] = await db.query(
             "SELECT * FROM activity_logs ORDER BY id DESC LIMIT 10"
         );
@@ -30,7 +48,7 @@ router.get("/", async (req, res) => {
             totalCustomers: totalCustomers[0]?.total || 0,
             totalYatras: totalYatras[0]?.total || 0,
             totalBookings: totalBookings[0]?.total || 0,
-            totalRevenue: totalRevenue[0]?.total || 0,
+            totalRevenue: parseFloat(totalRevenue[0]?.total || 0),
             recentActivity: recentActivity || []
         });
     } catch (err) {
@@ -58,13 +76,72 @@ router.get("/customers", async (req, res) => {
 
 /*
 =========================
-GET YATRA REPORT
+GET TEMPLATE USAGE STATS
+=========================
+*/
+router.get("/template-stats", async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            `SELECT 
+                template_name,
+                category,
+                usage_count,
+                status,
+                created_at
+             FROM templates 
+             ORDER BY usage_count DESC 
+             LIMIT 20`
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching template stats:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
+GET CAMPAIGN PERFORMANCE
+=========================
+*/
+router.get("/campaign-performance", async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            `SELECT 
+                c.id,
+                c.campaign_name,
+                c.status,
+                c.total_recipients,
+                c.total_recipients,
+                c.created_at,
+                c.created_at
+             FROM campaigns c
+             WHERE c.status IN ('Sent', 'Completed')
+             ORDER BY c.created_at DESC 
+             LIMIT 20`
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching campaign performance:", err);
+        res.json([]);
+    }
+});
+
+/*
+=========================
+GET YATRA REPORT (Revenue by Yatra)
 =========================
 */
 router.get("/yatras", async (req, res) => {
     try {
         const [rows] = await db.query(
-            `SELECT ym.yatra_name, COUNT(ytc.id) as bookings, SUM(ytc.total_amount) as revenue
+            `SELECT 
+                ym.yatra_name, 
+                COUNT(ytc.id) as bookings, 
+                COALESCE(SUM(ytc.total_amount), 0) as revenue,
+                COALESCE(AVG(ytc.total_amount), 0) as avg_amount,
+                MAX(ytc.total_amount) as max_amount,
+                MIN(ytc.total_amount) as min_amount
              FROM yatra_master ym
              LEFT JOIN yatra_trip_customers ytc ON ym.id = ytc.yatra_trip_id
              GROUP BY ym.id
@@ -84,10 +161,8 @@ GET INTEREST DISTRIBUTION
 */
 router.get("/interest-distribution", async (req, res) => {
     try {
-        // Get all interests
         const [interests] = await db.query("SELECT id, interest_name FROM interests ORDER BY interest_name");
 
-        // Get customer counts per interest
         const results = [];
         let totalCustomersWithInterests = 0;
 
@@ -104,7 +179,6 @@ router.get("/interest-distribution", async (req, res) => {
             });
         }
 
-        // Calculate percentages
         const finalResults = results.map(item => ({
             ...item,
             percentage: totalCustomersWithInterests > 0 
@@ -112,7 +186,6 @@ router.get("/interest-distribution", async (req, res) => {
                 : 0
         }));
 
-        // Sort by count descending
         finalResults.sort((a, b) => b.count - a.count);
 
         res.json(finalResults);
@@ -128,17 +201,29 @@ GET REVENUE STATS
 =========================
 */
 router.get("/revenue-stats", async (req, res) => {
+    const { date_from, date_to } = req.query;
+
     try {
-        // Total revenue from yatra_trip_customers
-        const [totalRevenue] = await db.query("SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers");
+        let dateCondition = "";
+        let params = [];
+
+        if (date_from && date_to) {
+            dateCondition = " WHERE created_at BETWEEN ? AND ?";
+            params.push(date_from, date_to + " 23:59:59");
+        } else if (date_from) {
+            dateCondition = " WHERE created_at >= ?";
+            params.push(date_from);
+        } else if (date_to) {
+            dateCondition = " WHERE created_at <= ?";
+            params.push(date_to + " 23:59:59");
+        }
+
+        let revenueQuery = "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers" + dateCondition;
+        let bookingQuery = "SELECT COUNT(*) as total FROM yatra_trip_customers" + dateCondition;
         
-        // Total bookings (customers in trips)
-        const [totalBookings] = await db.query("SELECT COUNT(*) as total FROM yatra_trip_customers");
-        
-        // Total yatras
+        const [totalRevenue] = await db.query(revenueQuery, params);
+        const [totalBookings] = await db.query(bookingQuery, params);
         const [totalYatras] = await db.query("SELECT COUNT(*) as total FROM yatra_master");
-        
-        // Total trips
         const [totalTrips] = await db.query("SELECT COUNT(*) as total FROM yatra_trips");
 
         res.json({
@@ -149,6 +234,89 @@ router.get("/revenue-stats", async (req, res) => {
         });
     } catch (err) {
         console.error("Error fetching revenue stats:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
+GET REVENUE SUMMARY (Today, Week, Month)
+=========================
+*/
+router.get("/revenue-summary", async (req, res) => {
+    try {
+        // Today
+        const [today] = await db.query(
+            "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers WHERE DATE(created_at) = CURDATE()"
+        );
+        
+        // This Week
+        const [week] = await db.query(
+            "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers WHERE YEARWEEK(created_at) = YEARWEEK(NOW())"
+        );
+        
+        // This Month
+        const [month] = await db.query(
+            "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers WHERE MONTH(created_at) = MONTH(NOW()) AND YEAR(created_at) = YEAR(NOW())"
+        );
+
+        res.json({
+            today: parseFloat(today[0]?.total || 0),
+            week: parseFloat(week[0]?.total || 0),
+            month: parseFloat(month[0]?.total || 0)
+        });
+    } catch (err) {
+        console.error("Error fetching revenue summary:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
+GET DAILY ACTIVITY STATS
+=========================
+*/
+router.get("/daily-activity", async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            `SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as count,
+                COUNT(DISTINCT username) as unique_users
+             FROM activity_logs
+             WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+             GROUP BY DATE(created_at)
+             ORDER BY date DESC`
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching daily activity:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
+GET CUSTOMER GROWTH
+=========================
+*/
+router.get("/customer-growth", async (req, res) => {
+    const { months = 6 } = req.query;
+
+    try {
+        const [rows] = await db.query(
+            `SELECT 
+                DATE_FORMAT(created_at, '%Y-%m') as month,
+                COUNT(*) as new_customers
+             FROM customers
+             WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+             GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+             ORDER BY month ASC`,
+            [parseInt(months)]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching customer growth:", err);
         res.status(500).json({ error: err.message });
     }
 });

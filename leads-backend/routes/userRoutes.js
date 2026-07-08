@@ -79,7 +79,7 @@ router.post("/", async (req, res) => {
             username, 
             hashedPassword, 
             full_name, 
-            role || 'employee', 
+            role || 'team', 
             whatsapp_number || '', 
             is_active !== undefined ? is_active : 1
         ]);
@@ -189,6 +189,60 @@ router.delete("/:id", async (req, res) => {
         });
     } catch (err) {
         console.error("Error deleting user:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
+CHANGE PASSWORD
+=========================
+*/
+router.post("/change-password", async (req, res) => {
+    const { user_id, current_password, new_password } = req.body;
+
+    if (!user_id || !current_password || !new_password) {
+        return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (new_password.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    try {
+        // Get user with current password
+        const [rows] = await db.query(
+            "SELECT id, password FROM users WHERE id = ?",
+            [user_id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Verify current password
+        const user = rows[0];
+        const isValid = await bcrypt.compare(current_password, user.password);
+        
+        if (!isValid) {
+            return res.status(401).json({ message: "Current password is incorrect" });
+        }
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(new_password, 10);
+
+        // Update password
+        await db.query(
+            "UPDATE users SET password = ? WHERE id = ?",
+            [hashedPassword, user_id]
+        );
+
+        res.json({
+            success: true,
+            message: "Password changed successfully!"
+        });
+    } catch (err) {
+        console.error("Error changing password:", err);
         res.status(500).json({ error: err.message });
     }
 });

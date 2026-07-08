@@ -92,6 +92,35 @@ router.put("/bulk/group", async (req, res) => {
 
 /*
 =========================
+CHECK IF CUSTOMER EXISTS BY PHONE
+=========================
+*/
+router.get("/check/:mobile", async (req, res) => {
+    const { mobile } = req.params;
+
+    try {
+        const [rows] = await db.query(
+            "SELECT * FROM customers WHERE mobile_number = ?",
+            [mobile]
+        );
+        
+        if (rows.length > 0) {
+            res.json({ 
+                exists: true, 
+                customer: rows[0],
+                id: rows[0].id 
+            });
+        } else {
+            res.json({ exists: false });
+        }
+    } catch (err) {
+        console.error("Error checking customer:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
 GET CUSTOMER BY ID
 =========================
 */
@@ -124,14 +153,15 @@ router.post("/", async (req, res) => {
     const { customer_name, mobile_number, interests, location_type, group_type } = req.body;
 
     if (!customer_name || !mobile_number) {
-        return res.status(400).json({ error: "Customer name and mobile number are required" });
+        return res.status(400).json({ error: "Name and mobile number are required" });
     }
 
     try {
         const [result] = await db.query(
-            `INSERT INTO customers (customer_name, mobile_number, interests, location_type, group_type)
-             VALUES (?, ?, ?, ?, ?)`,
-            [customer_name, mobile_number, interests || null, location_type || null, group_type || 'Daily Reach']
+            `INSERT INTO customers 
+            (customer_name, mobile_number, interests, location_type, group_type) 
+            VALUES (?, ?, ?, ?, ?)`,
+            [customer_name, mobile_number, interests || '', location_type || 'Delhi NCR', group_type || 'Daily Reach']
         );
 
         res.status(201).json({
@@ -155,16 +185,16 @@ router.put("/:id", async (req, res) => {
     const { customer_name, mobile_number, interests, location_type, group_type } = req.body;
 
     try {
-        const [result] = await db.query(
-            `UPDATE customers 
-             SET customer_name = ?, mobile_number = ?, interests = ?, location_type = ?, group_type = ?
-             WHERE id = ?`,
-            [customer_name, mobile_number, interests || null, location_type || null, group_type || 'Daily Reach', id]
+        await db.query(
+            `UPDATE customers SET 
+                customer_name = ?, 
+                mobile_number = ?, 
+                interests = ?, 
+                location_type = ?, 
+                group_type = ?
+            WHERE id = ?`,
+            [customer_name, mobile_number, interests || '', location_type || 'Delhi NCR', group_type || 'Daily Reach', id]
         );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: "Customer not found" });
-        }
 
         res.json({
             success: true,
@@ -172,39 +202,6 @@ router.put("/:id", async (req, res) => {
         });
     } catch (err) {
         console.error("Error updating customer:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/*
-=========================
-UPDATE CUSTOMER GROUP
-=========================
-*/
-router.put("/:id/group", async (req, res) => {
-    const { id } = req.params;
-    const { group_type } = req.body;
-
-    if (!group_type) {
-        return res.status(400).json({ error: "Group type is required" });
-    }
-
-    try {
-        const [result] = await db.query(
-            "UPDATE customers SET group_type = ? WHERE id = ?",
-            [group_type, id]
-        );
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: "Customer not found" });
-        }
-
-        res.json({
-            success: true,
-            message: "Customer group updated successfully"
-        });
-    } catch (err) {
-        console.error("Error updating customer group:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -239,28 +236,29 @@ router.delete("/:id", async (req, res) => {
 
 /*
 =========================
-SEARCH CUSTOMERS
+UPDATE CUSTOMER GROUP (PATCH)
 =========================
 */
-router.get("/search/:phone", async (req, res) => {
-    const { phone } = req.params;
+router.patch("/:id/group", async (req, res) => {
+    const { id } = req.params;
+    const { group_type } = req.body;
+
+    if (!group_type) {
+        return res.status(400).json({ error: "Group type is required" });
+    }
 
     try {
-        const [rows] = await db.query(
-            "SELECT * FROM customers WHERE mobile_number LIKE ? LIMIT 1",
-            [`%${phone}`]
+        await db.query(
+            "UPDATE customers SET group_type = ? WHERE id = ?",
+            [group_type, id]
         );
 
-        if (rows.length === 0) {
-            return res.json({ exists: false });
-        }
-
         res.json({
-            exists: true,
-            customer: rows[0]
+            success: true,
+            message: `Customer group updated to "${group_type}"`
         });
     } catch (err) {
-        console.error("Error searching customer:", err);
+        console.error("Error updating customer group:", err);
         res.status(500).json({ error: err.message });
     }
 });

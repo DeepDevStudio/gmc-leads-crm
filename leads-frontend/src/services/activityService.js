@@ -1,13 +1,11 @@
-import axios from "axios";
-
-const API = "/api/activity";
+import api from "./api";
 
 export const createActivity = async (data) => {
-    const response = await axios.post(`${API}/create`, data);
-    return response.data;
+  const response = await api.post('/activity/create', data);
+  return response.data;
 };
 
 export const getActivities = async () => {
-    const response = await axios.get(`${API}/all`);
-    return response.data;
+  const response = await api.get('/activity/all');
+  return response.data;
 };
