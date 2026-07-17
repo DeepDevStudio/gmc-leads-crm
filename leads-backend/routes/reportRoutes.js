@@ -59,6 +59,34 @@ router.get("/", async (req, res) => {
 
 /*
 =========================
+GET EMPLOYEE ACTIVITY REPORT
+=========================
+*/
+router.get("/employees", async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            `SELECT 
+                id,
+                username,
+                full_name,
+                role,
+                is_active,
+                created_at,
+                (SELECT COUNT(*) FROM activity_logs WHERE user_id = users.id) as activity_count,
+                (SELECT MAX(created_at) FROM activity_logs WHERE user_id = users.id) as last_active
+             FROM users 
+             WHERE role IN ('team', 'employee') 
+             ORDER BY created_at DESC`
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching employee report:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/*
+=========================
 GET CUSTOMER REPORT
 =========================
 */
@@ -112,8 +140,6 @@ router.get("/campaign-performance", async (req, res) => {
                 c.campaign_name,
                 c.status,
                 c.total_recipients,
-                c.total_recipients,
-                c.created_at,
                 c.created_at
              FROM campaigns c
              WHERE c.status IN ('Sent', 'Completed')
@@ -245,17 +271,14 @@ GET REVENUE SUMMARY (Today, Week, Month)
 */
 router.get("/revenue-summary", async (req, res) => {
     try {
-        // Today
         const [today] = await db.query(
             "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers WHERE DATE(created_at) = CURDATE()"
         );
         
-        // This Week
         const [week] = await db.query(
             "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers WHERE YEARWEEK(created_at) = YEARWEEK(NOW())"
         );
         
-        // This Month
         const [month] = await db.query(
             "SELECT COALESCE(SUM(total_amount), 0) as total FROM yatra_trip_customers WHERE MONTH(created_at) = MONTH(NOW()) AND YEAR(created_at) = YEAR(NOW())"
         );

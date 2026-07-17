@@ -5,27 +5,14 @@ const db = require("../config/db");
 // ===== GET DASHBOARD STATS =====
 router.get("/stats", async (req, res) => {
     try {
-        // Total customers
         const [totalCustomers] = await db.query("SELECT COUNT(*) as count FROM customers");
-        
-        // Daily Reach count
         const [dailyReach] = await db.query("SELECT COUNT(*) as count FROM customers WHERE group_type = 'Daily Reach'");
-        
-        // Do Not Reach count
         const [doNotReach] = await db.query("SELECT COUNT(*) as count FROM customers WHERE group_type = 'Do Not Reach'");
-        
-        // Total trips
         const [totalTrips] = await db.query("SELECT COUNT(*) as count FROM trips");
-        
-        // Total Yatras
         const [totalYatras] = await db.query("SELECT COUNT(*) as count FROM yatra_master");
-        
-        // Recent activity (last 7 days)
         const [recentActivity] = await db.query(
             "SELECT COUNT(*) as count FROM customers WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"
         );
-        
-        // Recent messages (last 5)
         const [recentMessages] = await db.query(
             "SELECT * FROM message_logs ORDER BY created_at DESC LIMIT 5"
         );
@@ -45,10 +32,31 @@ router.get("/stats", async (req, res) => {
     }
 });
 
+// ===== GET DASHBOARD TREND =====
+router.get("/trend", async (req, res) => {
+    try {
+        // Get bookings trend for last 7 days
+        const [rows] = await db.query(`
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as count,
+                COALESCE(SUM(total_amount), 0) as revenue
+            FROM yatra_bookings 
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        `);
+        res.json(rows || []);
+    } catch (err) {
+        console.error("Error fetching dashboard trend:", err);
+        // If table doesn't exist, return empty array
+        res.json([]);
+    }
+});
+
 // ===== GET CHART DATA =====
 router.get("/chart", async (req, res) => {
     try {
-        // Daily customer growth (last 30 days)
         const [growth] = await db.query(`
             SELECT DATE(created_at) as date, COUNT(*) as count 
             FROM customers 
